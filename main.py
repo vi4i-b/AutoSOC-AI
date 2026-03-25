@@ -41,52 +41,93 @@ class AutoSOCApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # --- SIDEBAR ---
-        self.sidebar = ctk.CTkFrame(self, width=300, corner_radius=0, fg_color="#111111")
+        self.sidebar = ctk.CTkScrollableFrame(self, width=300, corner_radius=0, fg_color="#111111")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_columnconfigure(0, weight=1)
 
         self.logo = ctk.CTkLabel(self.sidebar, text="🛡️ AUTOSOC AI", font=ctk.CTkFont(size=22, weight="bold"))
-        self.logo.grid(row=0, column=0, padx=20, pady=30)
+        self.logo.pack(padx=20, pady=30)
 
         self.btn_scan = ctk.CTkButton(self.sidebar, text="🔍 ŞƏBƏKƏNİ TARA", fg_color="#1f538d",
-                                      command=self.start_scan_thread, height=45)
-        self.btn_scan.grid(row=1, column=0, padx=20, pady=10)
+                                      command=self.start_scan_thread, height=45, width=260)
+        self.btn_scan.pack(padx=20, pady=10)
 
         self.btn_guard = ctk.CTkButton(self.sidebar, text="⚡ AI MÜHAFİZƏ: SÖNDÜ", fg_color="#8d1f1f",
-                                       command=self.toggle_guard, height=45)
-        self.btn_guard.grid(row=2, column=0, padx=20, pady=10)
+                                       command=self.toggle_guard, height=45, width=260)
+        self.btn_guard.pack(padx=20, pady=10)
 
         # --- SENSITIVITY ---
         self.slider_label = ctk.CTkLabel(self.sidebar, text="Həssaslıq (DDoS): 500", text_color="#777777")
-        self.slider_label.grid(row=3, column=0, padx=20, pady=(15, 0))
-        self.threshold_slider = ctk.CTkSlider(self.sidebar, from_=50, to=2000, command=self.update_threshold)
-        self.threshold_slider.grid(row=4, column=0, padx=20, pady=10)
+        self.slider_label.pack(padx=20, pady=(15, 0))
+        self.threshold_slider = ctk.CTkSlider(self.sidebar, from_=50, to=2000, command=self.update_threshold, width=260)
+        self.threshold_slider.pack(padx=20, pady=10)
         self.threshold_slider.set(500)
 
         # --- FIREWALL SWITCHES ---
         self.fw_label = ctk.CTkLabel(self.sidebar, text="PORT İDARƏETMƏSİ", font=("Arial", 12, "bold"),
                                      text_color="#3498db")
-        self.fw_label.grid(row=5, column=0, padx=20, pady=(20, 5))
+        self.fw_label.pack(padx=20, pady=(20, 5))
 
-        self.switches = {
-            3389: ctk.CTkSwitch(self.sidebar, text="Port 3389 (RDP)",
-                                command=lambda: self.toggle_port(3389, self.switches[3389])),
-            80: ctk.CTkSwitch(self.sidebar, text="Port 80 (HTTP)",
-                              command=lambda: self.toggle_port(80, self.switches[80])),
-            22: ctk.CTkSwitch(self.sidebar, text="Port 22 (SSH)",
-                              command=lambda: self.toggle_port(22, self.switches[22])),
-            139: ctk.CTkSwitch(self.sidebar, text="Port 139 (NetBIOS)",
-                               command=lambda: self.toggle_port(139, self.switches[139]))
+        # Контейнер с прокруткой для портов
+        self.ports_frame = ctk.CTkScrollableFrame(self.sidebar, width=260, height=280, fg_color="#0a0a0a")
+        self.ports_frame.pack(padx=10, pady=5, fill="x")
+
+        # Расширенный список портов
+        self.port_definitions = {
+            21: "FTP",
+            22: "SSH",
+            23: "Telnet",
+            25: "SMTP",
+            53: "DNS",
+            80: "HTTP",
+            110: "POP3",
+            135: "RPC",
+            139: "NetBIOS",
+            143: "IMAP",
+            443: "HTTPS",
+            445: "SMB",
+            1433: "MS-SQL",
+            1521: "Oracle DB",
+            3306: "MySQL",
+            3389: "RDP",
+            5432: "PostgreSQL",
+            5900: "VNC",
+            6379: "Redis",
+            8080: "HTTP-Alt",
+            8443: "HTTPS-Alt",
+            27017: "MongoDB"
         }
 
-        row_idx = 6
-        for p in self.switches:
-            self.switches[p].grid(row=row_idx, column=0, padx=20, pady=5)
-            self.switches[p].select()
-            row_idx += 1
+        self.switches = {}
+
+        # Кнопки управления всеми портами
+        btn_frame = ctk.CTkFrame(self.ports_frame, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=5, pady=(0, 10))
+
+        btn_all_on = ctk.CTkButton(btn_frame, text="✓ Hamısını Aç", width=120, height=28,
+                                   fg_color="#1a6b3c", hover_color="#27ae60",
+                                   command=self.enable_all_ports)
+        btn_all_on.pack(side="left", padx=2)
+
+        btn_all_off = ctk.CTkButton(btn_frame, text="✕ Hamısını Bağla", width=120, height=28,
+                                    fg_color="#8d1f1f", hover_color="#c0392b",
+                                    command=self.disable_all_ports)
+        btn_all_off.pack(side="left", padx=2)
+
+        # Создаем переключатели для каждого порта
+        for port, service in sorted(self.port_definitions.items()):
+            switch = ctk.CTkSwitch(
+                self.ports_frame,
+                text=f"Port {port} ({service})",
+                command=lambda p=port: self.toggle_port(p, self.switches[p])
+            )
+            switch.pack(padx=10, pady=3, anchor="w")
+            switch.select()  # По умолчанию все порты открыты
+            self.switches[port] = switch
 
         self.btn_history = ctk.CTkButton(self.sidebar, text="📜 AUDIT JURNALI", fg_color="transparent", border_width=1,
-                                         command=self.show_history)
-        self.btn_history.grid(row=12, column=0, padx=20, pady=25)
+                                         command=self.show_history, width=260)
+        self.btn_history.pack(padx=20, pady=15)
 
         # --- TELEGRAM ALERT SETTINGS ---
         self.tg_label = ctk.CTkLabel(
@@ -95,17 +136,17 @@ class AutoSOCApp(ctk.CTk):
             font=("Arial", 12, "bold"),
             text_color="#3498db"
         )
-        self.tg_label.grid(row=13, column=0, padx=20, pady=(20, 5))
+        self.tg_label.pack(padx=20, pady=(20, 5))
 
         self.tg_entry = ctk.CTkEntry(
             self.sidebar,
-            width=220,
+            width=260,
             height=38,
             placeholder_text="Telegram Chat ID...",
             fg_color="#0f0f0f",
             font=("Consolas", 12)
         )
-        self.tg_entry.grid(row=14, column=0, padx=20, pady=5)
+        self.tg_entry.pack(padx=20, pady=5)
         self.tg_entry.insert(0, self.chat_id)
 
         self.tg_hint = ctk.CTkLabel(
@@ -115,7 +156,7 @@ class AutoSOCApp(ctk.CTk):
             text_color="#555555",
             justify="center"
         )
-        self.tg_hint.grid(row=15, column=0, padx=20, pady=(0, 5))
+        self.tg_hint.pack(padx=20, pady=(0, 5))
 
         self.btn_open_bot = ctk.CTkButton(
             self.sidebar,
@@ -126,9 +167,10 @@ class AutoSOCApp(ctk.CTk):
             text_color="#3498db",
             hover_color="#1a2a3a",
             height=35,
+            width=260,
             command=lambda: __import__('webbrowser').open("https://t.me/AutoSOC_Baku_Bot")
         )
-        self.btn_open_bot.grid(row=16, column=0, padx=20, pady=(0, 5))
+        self.btn_open_bot.pack(padx=20, pady=(0, 5))
 
         self.btn_save_tg = ctk.CTkButton(
             self.sidebar,
@@ -136,9 +178,10 @@ class AutoSOCApp(ctk.CTk):
             fg_color="#1a6b3c",
             hover_color="#27ae60",
             height=35,
+            width=260,
             command=self.save_telegram_id
         )
-        self.btn_save_tg.grid(row=17, column=0, padx=20, pady=(5, 10))
+        self.btn_save_tg.pack(padx=20, pady=(5, 10))
 
         self.tg_status = ctk.CTkLabel(
             self.sidebar,
@@ -146,7 +189,7 @@ class AutoSOCApp(ctk.CTk):
             font=("Arial", 10),
             text_color="#2ecc71"
         )
-        self.tg_status.grid(row=18, column=0, padx=20, pady=0)
+        self.tg_status.pack(padx=20, pady=(0, 20))
 
         # --- MAIN TERMINAL ---
         self.main_frame = ctk.CTkFrame(self, corner_radius=15, fg_color="#050505", border_width=1,
@@ -173,6 +216,25 @@ class AutoSOCApp(ctk.CTk):
         self.result_box.tag_config("success", foreground="#2ecc71")
         self.result_box.tag_config("ai", foreground="#3498db")
         self.result_box.tag_config("info", foreground="#f1c40f")
+
+    # -------------------------------------------------------
+    # PORT MANAGEMENT
+    # -------------------------------------------------------
+    def enable_all_ports(self):
+        """Открыть все порты"""
+        for port, switch in self.switches.items():
+            if not switch.get():
+                switch.select()
+                self.toggle_port(port, switch)
+        self.result_box.insert("0.0", "[FIREWALL] Bütün portlar AÇILDI\n", "success")
+
+    def disable_all_ports(self):
+        """Закрыть все порты"""
+        for port, switch in self.switches.items():
+            if switch.get():
+                switch.deselect()
+                self.toggle_port(port, switch)
+        self.result_box.insert("0.0", "[FIREWALL] Bütün portlar BLOKLANDI\n", "danger")
 
     # -------------------------------------------------------
     # TELEGRAM
@@ -232,7 +294,9 @@ class AutoSOCApp(ctk.CTk):
             f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action={action} protocol=TCP localport={port}')
 
         status = "AÇIQ" if is_open else "BLOKLANDI"
-        self.result_box.insert("0.0", f"[FIREWALL] Port {port} statusu: {status}\n", "success" if is_open else "danger")
+        service = self.port_definitions.get(port, "Unknown")
+        self.result_box.insert("0.0", f"[FIREWALL] Port {port} ({service}): {status}\n",
+                               "success" if is_open else "danger")
 
     def update_threshold(self, value):
         self.guard.threshold = int(value)
@@ -279,11 +343,13 @@ class AutoSOCApp(ctk.CTk):
                 risks = analyzer.analyze(dev['ports'])
                 for r in risks:
                     if r['port'] in self.switches and not self.switches[r['port']].get():
-                        self.result_box.insert("end", f"    - Port {r['port']}: [FIREWALL TƏRƏFİNDƏN İZOLƏ EDİLİB]\n", "ai")
+                        self.result_box.insert("end", f"    - Port {r['port']}: [FIREWALL TƏRƏFİNDƏN İZOLƏ EDİLİB]\n",
+                                               "ai")
                         continue
 
                     total_risks += 1
-                    self.result_box.insert("end", f"    - Təhlükə: Port {r['port']} ({r['info']['service']})\n", "danger")
+                    self.result_box.insert("end", f"    - Təhlükə: Port {r['port']} ({r['info']['service']})\n",
+                                           "danger")
                     instruction = self.ai_expert.generate_instruction(vendor, r['port'], r['info']['service'])
                     self.result_box.insert("end", f"    💡 AI: {instruction}\n")
 
@@ -318,9 +384,11 @@ class AutoSOCApp(ctk.CTk):
 if __name__ == "__main__":
     import login
 
+
     def on_login_success(user):
         app = AutoSOCApp()
         app.title(f"AutoSOC AI: Cyber Shield v2.6  |  {user['username']} ({user['role']})")
         app.mainloop()
+
 
     login.launch(on_login_success)
