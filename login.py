@@ -7,6 +7,9 @@ from tkinter import messagebox
 from auth import init_db, verify_user, register_user, save_remember, load_remember, clear_remember
 
 ctk.set_appearance_mode("dark")
+ctk.deactivate_automatic_dpi_awareness()
+ctk.set_window_scaling(1.0)
+ctk.set_widget_scaling(1.0)
 
 # ─────────────────────────── COLOUR PALETTE ───────────────────────────
 BG_DEEP       = "#080e1f"      # outermost background
