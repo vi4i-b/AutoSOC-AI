@@ -47,6 +47,15 @@ class SOCDatabase:
             )
             """
         )
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT
+            )
+            """
+        )
         self.conn.commit()
 
     def add_scan(self, target, risk, summary):
@@ -114,3 +123,28 @@ class SOCDatabase:
             """
         )
         return self.cursor.fetchone()
+
+    def set_setting(self, key, value):
+        now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        self.cursor.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (str(key), "" if value is None else str(value), now),
+        )
+        self.conn.commit()
+
+    def get_setting(self, key, default=None):
+        self.cursor.execute("SELECT value FROM app_settings WHERE key = ?", (str(key),))
+        row = self.cursor.fetchone()
+        if not row:
+            return default
+        return row[0]
+
+    def delete_setting(self, key):
+        self.cursor.execute("DELETE FROM app_settings WHERE key = ?", (str(key),))
+        self.conn.commit()

@@ -1,17 +1,23 @@
+import json
 import os
+from datetime import datetime
+
 import requests
 
 
 class AISecurityExpert:
     SYSTEM_PROMPT = (
-        "You are AutoSOC AI, a SOC analyst and cybersecurity expert. "
-        "You answer in the user's language when possible, especially Russian, Azerbaijani, or English. "
+        "You are AutoSOC AI, a cybersecurity assistant that should feel like a real SOC copilot. "
+        "Answer in the user's language when possible, especially Russian, Azerbaijani, or English. "
+        "Use the full dialog context, remember the active topic, connect follow-up questions to previous turns, "
+        "and personalize answers based on the recent scan context and persistent memory. "
         "Focus on defensive cybersecurity topics: SOC operations, phishing, brute-force, malware, "
         "incident response, hardening, monitoring, SIEM, firewalling, exposed ports, authentication, "
         "network defense, ransomware, detection, and remediation. "
-        "If the user starts with a greeting or a general message, respond naturally and guide them into a security-focused conversation. "
+        "When the user asks a short follow-up like 'why', 'how', 'what next', or references 'this port'/'this threat', "
+        "infer the target from recent context instead of asking them to repeat themselves. "
         "If the topic is unrelated to cybersecurity, refuse briefly and redirect back to cybersecurity. "
-        "When scan context is provided, use it in the answer."
+        "When scan context is provided, use it directly and give practical next steps."
     )
 
     def __init__(self):
@@ -20,8 +26,8 @@ class AISecurityExpert:
         self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat").strip()
         self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3.1:8b").strip()
-        self.conversation_history = []
-        self.history_limit = 12
+        self.memory_file = os.getenv("AI_MEMORY_FILE", "ai_memory.json").strip() or "ai_memory.json"
+        self.history_limit = 16
         self.port_catalog = {
             21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP",
             110: "POP3", 135: "RPC", 139: "NetBIOS", 143: "IMAP", 443: "HTTPS",
@@ -35,12 +41,58 @@ class AISecurityExpert:
             "soc", "ssh", "rdp", "smb", "ddos", "auth", "attack", "defense", "forensic", "siem",
             "безопас", "фиш", "брут", "атака", "угроз", "инцидент", "защит", "сеть", "порт",
             "кибер", "шифров", "фаервол", "вирус", "вредонос",
-            "təhlük", "tehluk", "fişinq", "hücum", "tehlukesizlik", "şəbək", "port", "müdafiə",
+            "təhlük", "tehluk", "fişinq", "hücum", "tehlukesizlik", "şəbək", "müdafiə",
             "zərərli", "fişing", "sızma",
         ]
+        self.followup_markers = [
+            "why", "how", "what next", "and then", "what about", "this", "that", "it",
+            "почему", "как", "что дальше", "а если", "это", "этот", "эта", "оно",
+            "niyə", "necə", "sonra nə", "bəs", "bu", "o",
+        ]
+        self.conversation_history = []
+        self.memory = self._load_memory()
+
+    def _default_memory(self):
+        return {
+            "preferred_language": "",
+            "active_topic": "",
+            "user_profile": {
+                "focus_area": "",
+                "last_target_ip": "",
+            },
+            "known_ports": [],
+            "recent_findings": [],
+            "conversation_summary": "",
+            "last_updated": "",
+        }
+
+    def _load_memory(self):
+        if not os.path.exists(self.memory_file):
+            return self._default_memory()
+
+        try:
+            with open(self.memory_file, "r", encoding="utf-8") as memory_file:
+                data = json.load(memory_file)
+                memory = self._default_memory()
+                if isinstance(data, dict):
+                    memory.update(data)
+                return memory
+        except (OSError, json.JSONDecodeError):
+            return self._default_memory()
+
+    def _save_memory(self):
+        self.memory["last_updated"] = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        try:
+            with open(self.memory_file, "w", encoding="utf-8") as memory_file:
+                json.dump(self.memory, memory_file, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
 
     def reset_history(self):
         self.conversation_history = []
+        self.memory["active_topic"] = ""
+        self.memory["conversation_summary"] = ""
+        self._save_memory()
 
     def detect_language(self, text):
         lowered = (text or "").lower()
@@ -53,25 +105,25 @@ class AISecurityExpert:
     def localized(self, language, key):
         phrases = {
             "ru": {
-                "greeting": "Привет. Я AutoSOC AI, помощник по кибербезопасности. Могу помочь с фишингом, brute-force, открытыми портами, hardening и разбором скана.",
-                "redirect": "Я отвечаю по темам кибербезопасности. Спроси про фишинг, brute-force, malware, hardening, порты или защиту сети.",
-                "no_scan": "Пока нет контекста сканирования. Сначала запусти скан, и я помогу разобрать результат.",
+                "greeting": "Привет. Я AutoSOC AI, помощник по кибербезопасности. Помогаю разбирать угрозы, порты, hardening и результаты сканирования.",
+                "redirect": "Я отвечаю по темам кибербезопасности. Спроси про фишинг, brute-force, malware, hardening, открытые порты или защиту сети.",
+                "no_scan": "Пока нет контекста сканирования. Запусти скан, и я помогу разобрать результат.",
                 "fallback": "Сейчас живой LLM недоступен, поэтому я отвечаю в локальном режиме.",
-                "hello_help": "Можешь спросить, например: «Как защититься от фишинга?» или «Насколько опасен порт 3389?»",
+                "hello_help": "Можно спросить, например: «Почему опасен 445 порт?», «Что делать после обнаружения RDP?» или «Разбери последний скан».",
             },
             "az": {
-                "greeting": "Salam. Mən AutoSOC AI təhlükəsizlik köməkçisiyəm. Fişinq, brute-force, açıq portlar, hardening və scan nəticələri ilə kömək edə bilərəm.",
-                "redirect": "Mən əsasən kibertəhlükəsizlik mövzularına cavab verirəm. Fişinq, brute-force, malware, hardening, portlar və şəbəkə müdafiəsi barədə soruşun.",
+                "greeting": "Salam. Mən AutoSOC AI təhlükəsizlik köməkçisiyəm. Təhdidlər, portlar, hardening və scan nəticələrini izah edə bilərəm.",
+                "redirect": "Mən əsasən kibertəhlükəsizlik mövzularına cavab verirəm. Fişinq, brute-force, malware, hardening, açıq portlar və şəbəkə müdafiəsi barədə soruşun.",
                 "no_scan": "Hələ scan konteksti yoxdur. Əvvəl scan başladın, sonra nəticəni birlikdə izah edərəm.",
                 "fallback": "Hazırda canlı LLM əlçatan deyil, buna görə lokal rejimdə cavab verirəm.",
-                "hello_help": "Məsələn soruşa bilərsiniz: «Fişinqdən necə qorunum?» və ya «3389 portu təhlükəlidirmi?»",
+                "hello_help": "Məsələn soruşa bilərsiniz: «445 portu niyə təhlükəlidir?», «RDP açıqdırsa nə etməliyəm?» və ya «Son scan-i izah et».",
             },
             "en": {
-                "greeting": "Hello. I am AutoSOC AI, your cybersecurity assistant. I can help with phishing, brute-force, open ports, hardening, and scan analysis.",
-                "redirect": "I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, ports, or network defense.",
+                "greeting": "Hello. I am AutoSOC AI, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results.",
+                "redirect": "I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, open ports, or network defense.",
                 "no_scan": "There is no scan context yet. Run a scan first and I will help interpret it.",
                 "fallback": "Live LLM is unavailable right now, so I am answering in local mode.",
-                "hello_help": "You can ask, for example: 'How do I protect against phishing?' or 'Is port 3389 dangerous?'",
+                "hello_help": "You can ask, for example: 'Why is port 445 risky?', 'What should I do after exposed RDP?', or 'Explain the last scan.'",
             },
         }
         return phrases.get(language, phrases["en"])[key]
@@ -81,13 +133,50 @@ class AISecurityExpert:
         greetings = [
             "hello", "hi", "hey", "yo", "good morning", "good evening",
             "привет", "здравствуйте", "здравствуй", "добрый день",
-            "salam", "sabahiniz xeyir", "axşamınız xeyir", "necəsən", "necesen",
+            "salam", "sabahınız xeyir", "axşamınız xeyir", "necəsən", "necesen",
         ]
         return any(lowered == item or lowered.startswith(f"{item} ") for item in greetings)
 
     def is_security_question(self, text):
         lowered = (text or "").lower()
         return any(keyword in lowered for keyword in self.security_keywords)
+
+    def infer_topic(self, question, devices=None):
+        lowered = (question or "").lower()
+        for port, service in self.port_catalog.items():
+            if str(port) in lowered:
+                return f"port_{port}_{service.lower()}"
+
+        if any(word in lowered for word in ["phishing", "phish", "фиш", "fiş"]):
+            return "phishing"
+        if any(word in lowered for word in ["brute", "парол", "password", "брут"]):
+            return "brute_force"
+        if any(word in lowered for word in ["malware", "virus", "вирус", "ransomware", "zərərli"]):
+            return "malware"
+        if any(word in lowered for word in ["scan", "result", "результ", "nəticə"]):
+            return "scan_analysis"
+        if any(word in lowered for word in ["incident", "response", "инцидент"]):
+            return "incident_response"
+
+        if self._is_followup_question(question):
+            return self.memory.get("active_topic") or self._get_last_port_topic(devices)
+
+        return ""
+
+    def _is_followup_question(self, question):
+        lowered = (question or "").strip().lower()
+        return len(lowered.split()) <= 6 or any(marker in lowered for marker in self.followup_markers)
+
+    def _get_last_port_topic(self, devices=None):
+        known_ports = self.memory.get("known_ports") or []
+        if known_ports:
+            return f"port_{known_ports[-1]}"
+
+        for device in devices or []:
+            ports = device.get("ports", [])
+            if ports:
+                return f"port_{ports[0].get('port')}"
+        return ""
 
     def summarize_scan(self, devices, language="en"):
         if not devices:
@@ -99,7 +188,7 @@ class AISecurityExpert:
             open_ports = device.get("ports", [])
             if open_ports:
                 port_list = ", ".join(
-                    f"{item['port']} ({self.port_catalog.get(item['port'], item.get('name', 'service'))})"
+                    f"{item['port']} ({self.port_catalog.get(int(item['port']), item.get('name', 'service'))})"
                     for item in open_ports
                 )
                 if language == "ru":
@@ -110,47 +199,107 @@ class AISecurityExpert:
                     lines.append(f"{device['ip']} / {vendor}: open ports -> {port_list}.")
             else:
                 if language == "ru":
-                    lines.append(f"{device['ip']} / {vendor}: по выбранным 22 портам открытых сервисов не найдено.")
+                    lines.append(f"{device['ip']} / {vendor}: по выбранным портам открытых сервисов не найдено.")
                 elif language == "az":
-                    lines.append(f"{device['ip']} / {vendor}: seçilmiş 22 port üzrə açıq servis tapılmadı.")
+                    lines.append(f"{device['ip']} / {vendor}: seçilmiş portlar üzrə açıq servis tapılmadı.")
                 else:
-                    lines.append(f"{device['ip']} / {vendor}: no open services detected across the selected 22 ports.")
+                    lines.append(f"{device['ip']} / {vendor}: no open services were detected on the selected ports.")
         return "\n".join(lines)
 
     def generate_instruction(self, device_type, port, service, language="en"):
-        vendor = (device_type or "").lower()
         if port == 445:
             if language == "ru":
-                return "Открыт SMB. Отключи SMBv1, ограничь доступ через firewall и проверь обновления."
+                return "Открыт SMB. Отключи SMBv1, ограничь доступ по firewall, проверь патчи и запрети доступ извне."
             if language == "az":
-                return "SMB açıqdır. SMBv1-i söndür, firewall ilə məhdudlaşdır və yeniləmələri yoxla."
-            return "SMB is exposed. Disable SMBv1, restrict access by firewall, and verify patching."
+                return "SMB açıqdır. SMBv1-i söndür, firewall ilə məhdudlaşdır, patch-ləri yoxla və internetdən girişi bağla."
+            return "SMB is exposed. Disable SMBv1, restrict it with the firewall, verify patching, and block internet exposure."
         if port == 3389:
             if language == "ru":
-                return "Открыт RDP. Включи NLA, задай сильные пароли и ограничь доступ по IP."
+                return "Открыт RDP. Включи NLA, задай сильные пароли, ограничь доступ по IP и включи MFA через VPN или бастион."
             if language == "az":
-                return "RDP açıqdır. NLA aktiv et, güclü parol istifadə et və giriş IP-lərini məhdudlaşdır."
-            return "RDP is exposed. Enable NLA, require strong passwords, and restrict source IPs."
+                return "RDP açıqdır. NLA aktiv et, güclü parol təyin et, IP-ləri məhdudlaşdır və MFA üçün VPN/bastion istifadə et."
+            return "RDP is exposed. Enable NLA, require strong passwords, restrict source IPs, and put MFA behind a VPN or bastion."
         if port == 22:
             if language == "ru":
-                return "Открыт SSH. Лучше использовать ключи, отключить вход по паролю и ограничить trusted IP."
+                return "Открыт SSH. Используй ключи, отключи вход по паролю, ограничь trusted IP и контролируй неудачные попытки входа."
             if language == "az":
-                return "SSH açıqdır. Açar əsaslı girişdən istifadə et, parol ilə girişi söndür və trusted IP-ləri məhdudlaşdır."
-            return "SSH is open. Prefer key-based auth, disable password login, and limit trusted source IPs."
+                return "SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə."
+            return "SSH is open. Prefer keys, disable password login, limit trusted source IPs, and monitor failed login attempts."
 
         if language == "ru":
-            return f"Сервис {service} на порту {port} расширяет поверхность атаки. Если он не нужен, закрой его через firewall и проверь настройки доступа."
+            return f"{service} на порту {port} расширяет поверхность атаки. Если сервис не нужен, закрой его и проверь контроль доступа."
         if language == "az":
-            return f"{service} xidməti Port {port} üzərində hücum səthini artırır. Lazım deyilsə, firewall ilə bağla və giriş nəzarətini yoxla."
-        return f"{service} on port {port} increases attack surface. If you do not need it, close it in the firewall and verify access control."
+            return f"{service} xidməti {port}-cu portda hücum səthini artırır. Lazım deyilsə, bağla və giriş nəzarətini yoxla."
+        return f"{service} on port {port} increases attack surface. If you do not need it, close it and verify access controls."
+
+    def _extract_findings(self, devices=None):
+        findings = []
+        known_ports = []
+        target_ip = ""
+
+        for device in devices or []:
+            if not target_ip:
+                target_ip = device.get("ip", "")
+            vendor = list(device.get("vendor", {}).values())[0] if device.get("vendor") else "Device"
+            for port in device.get("ports", []):
+                port_num = int(port.get("port"))
+                known_ports.append(port_num)
+                findings.append({
+                    "ip": device.get("ip", ""),
+                    "vendor": vendor,
+                    "port": port_num,
+                    "service": self.port_catalog.get(port_num, port.get("name", "service")),
+                })
+
+        self.memory["known_ports"] = known_ports[-12:]
+        if target_ip:
+            self.memory["user_profile"]["last_target_ip"] = target_ip
+        self.memory["recent_findings"] = findings[-12:]
+
+    def _remember_turn(self, question, answer, topic=""):
+        self.conversation_history.append({"role": "user", "content": question})
+        self.conversation_history.append({"role": "assistant", "content": answer})
+        self.conversation_history = self.conversation_history[-self.history_limit:]
+
+        if topic:
+            self.memory["active_topic"] = topic
+
+        short_answer = answer.replace("\n", " ").strip()
+        short_answer = short_answer[:220]
+        self.memory["conversation_summary"] = f"User asked: {question[:120]}. Assistant answered: {short_answer}"
+        self._save_memory()
+
+    def _memory_context(self):
+        preferred_language = self.memory.get("preferred_language") or "unknown"
+        active_topic = self.memory.get("active_topic") or "none"
+        target_ip = self.memory.get("user_profile", {}).get("last_target_ip") or "unknown"
+        findings = self.memory.get("recent_findings") or []
+        finding_text = ", ".join(
+            f"{item['ip']}:{item['port']}({item['service']})" for item in findings[-6:]
+        ) or "none"
+
+        return (
+            f"Preferred language: {preferred_language}\n"
+            f"Active topic: {active_topic}\n"
+            f"Last target IP: {target_ip}\n"
+            f"Recent findings: {finding_text}\n"
+            f"Conversation summary: {self.memory.get('conversation_summary', '')}"
+        )
 
     def build_input(self, question, devices=None):
         language = self.detect_language(question)
+        topic = self.infer_topic(question, devices)
         context = self.summarize_scan(devices or [], language)
         input_items = [
             {"role": "system", "content": [{"type": "text", "text": self.SYSTEM_PROMPT}]},
+            {"role": "system", "content": [{"type": "text", "text": f"Persistent memory:\n{self._memory_context()}"}]},
             {"role": "system", "content": [{"type": "text", "text": f"Latest scan context:\n{context}"}]},
         ]
+
+        if topic:
+            input_items.append(
+                {"role": "system", "content": [{"type": "text", "text": f"Current inferred topic: {topic}"}]}
+            )
 
         for item in self.conversation_history[-self.history_limit:]:
             input_items.append(
@@ -184,23 +333,28 @@ class AISecurityExpert:
             data = response.json()
             text = data.get("output_text", "").strip()
             if text:
-                self._remember_turn(question, text)
+                self._remember_turn(question, text, self.infer_topic(question, devices))
                 return text
             return "The model returned an empty response."
         except Exception as exc:
             return f"LLM request failed: {exc}"
 
     def query_ollama(self, question, devices=None):
+        language = self.detect_language(question)
+        topic = self.infer_topic(question, devices)
         payload = {
             "model": self.ollama_model,
-            "messages": [{"role": "system", "content": self.SYSTEM_PROMPT}],
+            "messages": [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "system", "content": f"Persistent memory:\n{self._memory_context()}"},
+                {"role": "system", "content": f"Latest scan context:\n{self.summarize_scan(devices or [], language)}"},
+            ],
             "stream": False,
         }
 
-        language = self.detect_language(question)
-        payload["messages"].append(
-            {"role": "system", "content": f"Latest scan context:\n{self.summarize_scan(devices or [], language)}"}
-        )
+        if topic:
+            payload["messages"].append({"role": "system", "content": f"Current inferred topic: {topic}"})
+
         payload["messages"].extend(self.conversation_history[-self.history_limit:])
         payload["messages"].append({"role": "user", "content": question})
 
@@ -210,36 +364,49 @@ class AISecurityExpert:
             data = response.json()
             text = data.get("message", {}).get("content", "").strip()
             if text:
-                self._remember_turn(question, text)
+                self._remember_turn(question, text, topic)
                 return text
             return "Local model returned an empty response."
         except Exception as exc:
             return f"Ollama request failed: {exc}"
 
-    def _remember_turn(self, question, answer):
-        self.conversation_history.append({"role": "user", "content": question})
-        self.conversation_history.append({"role": "assistant", "content": answer})
-        self.conversation_history = self.conversation_history[-self.history_limit:]
+    def _port_guidance_from_memory(self, language):
+        active_topic = self.memory.get("active_topic", "")
+        if not active_topic.startswith("port_"):
+            return ""
+
+        parts = active_topic.split("_")
+        port = None
+        for item in parts:
+            if item.isdigit():
+                port = int(item)
+                break
+        if port is None:
+            return ""
+
+        service = self.port_catalog.get(port, "service")
+        return self.generate_instruction("unknown", port, service, language)
 
     def local_fallback_answer(self, question, devices=None):
         language = self.detect_language(question)
         lowered = (question or "").lower()
+        topic = self.infer_topic(question, devices)
 
         if self.is_greeting(question):
             return f"{self.localized(language, 'greeting')} {self.localized(language, 'hello_help')}"
 
-        if any(word in lowered for word in ["who are you", "что ты умеешь", "sən nə edirsən", "what can you do", "что умеешь", "nə edə bilirsən"]):
+        if any(word in lowered for word in ["who are you", "что ты умеешь", "sən nə edirsən", "what can you do", "nə edə bilirsən"]):
             if language == "ru":
-                return "Я могу объяснять риски открытых портов, помогать с hardening, разбирать scan results, и подсказывать меры защиты от phishing, brute-force и malware."
+                return "Я анализирую риски по открытым портам, запоминаю тему диалога, учитываю последний скан и могу объяснять, что делать дальше по hardening, phishing, brute-force и malware."
             if language == "az":
-                return "Mən açıq port risklərini izah edə, hardening addımları təklif edə, scan nəticələrini şərh edə və fişinq, brute-force, malware mövzularında kömək edə bilərəm."
-            return "I can explain open port risks, suggest hardening steps, interpret scan results, and help with phishing, brute-force, and malware defense."
+                return "Mən açıq port risklərini analiz edirəm, dialoqun mövzusunu yadda saxlayıram, son scan-i nəzərə alıram və hardening, fişinq, brute-force, malware üzrə növbəti addımları izah edirəm."
+            return "I analyze open-port risk, remember the current topic, use the last scan, and explain next steps for hardening, phishing, brute-force, and malware defense."
 
         if any(word in lowered for word in ["phishing", "phish", "fişinq", "фиш"]):
             if language == "ru":
-                return "Для защиты от фишинга включи MFA, проверяй домен отправителя, не открывай неожиданные вложения, используй почтовую фильтрацию и обучай сотрудников сообщать о подозрительных письмах."
+                return "Для защиты от фишинга включи MFA, проверяй домен отправителя, не открывай неожиданные вложения, внедри фильтрацию почты и обучи пользователей сообщать о подозрительных письмах."
             if language == "az":
-                return "Fişinqdən qorunmaq üçün MFA aktiv et, göndərənin domenini yoxla, şübhəli link və əlavələri açma, email filtrasiya tətbiq et və işçiləri maarifləndir."
+                return "Fişinqdən qorunmaq üçün MFA aktiv et, göndərənin domenini yoxla, şübhəli link və əlavələri açma, email filtrasiya tətbiq et və istifadəçiləri maarifləndir."
             return "To reduce phishing risk, enable MFA, verify sender domains, avoid unexpected links or attachments, deploy email filtering, and train users to report suspicious messages."
 
         if any(word in lowered for word in ["brute", "брут", "парол", "password attack"]):
@@ -251,9 +418,9 @@ class AISecurityExpert:
 
         if any(word in lowered for word in ["malware", "virus", "вирус", "zərərli", "ransomware"]):
             if language == "ru":
-                return "Против malware и ransomware: быстрые патчи, EDR/AV, минимальные привилегии, сегментация сети, резервные копии offline и мониторинг lateral movement."
+                return "Против malware и ransomware нужны быстрые патчи, EDR/AV, минимальные привилегии, сегментация сети, offline-бэкапы и мониторинг lateral movement."
             if language == "az":
-                return "Malware və ransomware üçün: sürətli patching, EDR/AV, minimal hüquqlar, şəbəkə seqmentasiyası, offline backup və lateral movement monitorinqi vacibdir."
+                return "Malware və ransomware üçün sürətli patching, EDR/AV, minimal hüquqlar, şəbəkə seqmentasiyası, offline backup və lateral movement monitorinqi vacibdir."
             return "For malware and ransomware defense, patch quickly, deploy EDR/AV, minimize privileges, segment the network, keep offline backups, and monitor lateral movement."
 
         if any(word in lowered for word in ["scan", "result", "nəticə", "результ", "open port", "açıq port"]):
@@ -261,54 +428,69 @@ class AISecurityExpert:
 
         if any(word in lowered for word in ["risk", "threat", "danger", "угроз", "təhlük", "tehluk"]):
             findings = []
-            for device in devices or []:
-                vendor = list(device.get("vendor", {}).values())[0] if device.get("vendor") else "Device"
-                for port in device.get("ports", []):
-                    findings.append(
-                        f"{device['ip']} port {port['port']}: {self.generate_instruction(vendor, int(port['port']), port.get('name', 'service'), language)}"
-                    )
+            for item in (self.memory.get("recent_findings") or [])[-6:]:
+                findings.append(
+                    f"{item['ip']} port {item['port']}: {self.generate_instruction(item['vendor'], item['port'], item['service'], language)}"
+                )
             if findings:
-                return "\n".join(findings[:6])
+                return "\n".join(findings)
 
         for port, service in self.port_catalog.items():
             if str(port) in lowered:
                 return self.generate_instruction("unknown", port, service, language)
 
+        if topic and topic.startswith("port_"):
+            remembered = self._port_guidance_from_memory(language)
+            if remembered:
+                return remembered
+
+        if self._is_followup_question(question):
+            remembered = self._port_guidance_from_memory(language)
+            if remembered:
+                if language == "ru":
+                    return f"Судя по контексту, речь всё ещё о последнем обсуждаемом сервисе.\n{remembered}"
+                if language == "az":
+                    return f"Kontekstdən görünür ki, söhbət hələ də son müzakirə olunan servisdəndir.\n{remembered}"
+                return f"From the context, this still seems to be about the last discussed service.\n{remembered}"
+
         if self.is_security_question(question):
             if language == "ru":
-                return "Я понял, что вопрос про безопасность, но сейчас работаю в локальном режиме. Уточни тему: фишинг, открытый порт, hardening, malware, brute-force или разбор скана."
+                return "Я понял, что вопрос по безопасности. Уточни тему или привяжи ее к последнему скану: фишинг, открытый порт, hardening, malware, brute-force или инцидент."
             if language == "az":
-                return "Sualın təhlükəsizliklə bağlı olduğunu başa düşdüm, amma indi lokal rejimdəyəm. Mövzunu bir az dəqiqləşdirin: fişinq, açıq port, hardening, malware, brute-force və ya scan nəticəsi."
-            return "I understand this is a security question, but I am in local mode right now. Narrow it down a bit: phishing, open ports, hardening, malware, brute-force, or scan analysis."
+                return "Sualın təhlükəsizliklə bağlı olduğunu anladım. Mövzunu bir az dəqiqləşdirin və ya son scan-ə bağlayın: fişinq, açıq port, hardening, malware, brute-force və ya insident."
+            return "I understand this is a security question. Narrow it down or connect it to the last scan: phishing, open port, hardening, malware, brute-force, or incident response."
 
         return f"{self.localized(language, 'fallback')} {self.localized(language, 'redirect')}"
 
     def answer_question(self, question, devices=None):
         prompt = (question or "").strip()
         if not prompt:
-            language = "en"
-            return self.localized(language, "hello_help")
+            return self.localized(self.memory.get("preferred_language") or "en", "hello_help")
 
         language = self.detect_language(prompt)
+        self.memory["preferred_language"] = language
+        self._extract_findings(devices)
+
         if self.is_greeting(prompt):
-            return f"{self.localized(language, 'greeting')} {self.localized(language, 'hello_help')}"
+            answer = f"{self.localized(language, 'greeting')} {self.localized(language, 'hello_help')}"
+            self._remember_turn(prompt, answer, self.infer_topic(prompt, devices))
+            return answer
 
-        provider_answer = None
-        if self.provider == "ollama":
-            provider_answer = self.query_ollama(prompt, devices)
-        else:
-            provider_answer = self.query_openai(prompt, devices)
-
+        provider_answer = self.query_ollama(prompt, devices) if self.provider == "ollama" else self.query_openai(prompt, devices)
         if provider_answer and not provider_answer.startswith("LLM request failed:") and not provider_answer.startswith("Ollama request failed:"):
             return provider_answer
 
         fallback = self.local_fallback_answer(prompt, devices)
-        if provider_answer and (provider_answer.startswith("LLM request failed:") or provider_answer.startswith("Ollama request failed:")):
+        technical_prefixes = ("LLM request failed:", "Ollama request failed:")
+        if provider_answer and provider_answer.startswith(technical_prefixes):
             if language == "ru":
-                return f"{fallback}\n\nТехническая заметка: {provider_answer}"
-            if language == "az":
-                return f"{fallback}\n\nTexniki qeyd: {provider_answer}"
-            return f"{fallback}\n\nTechnical note: {provider_answer}"
+                fallback = f"{fallback}\n\nТехническая заметка: {provider_answer}"
+            elif language == "az":
+                fallback = f"{fallback}\n\nTexniki qeyd: {provider_answer}"
+            else:
+                fallback = f"{fallback}\n\nTechnical note: {provider_answer}"
+
+        self._remember_turn(prompt, fallback, self.infer_topic(prompt, devices))
         return fallback
 
 
