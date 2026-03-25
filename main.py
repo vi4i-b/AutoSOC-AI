@@ -48,6 +48,8 @@ class AutoSOCApp(ctk.CTk):
         self.guard = NetworkGuard(self.on_threat_detected)
         self.last_scan_data = []
         self.ai_chat_window = None
+        self.ai_loader_job = None
+        self.ai_loader_step = 0
 
         try:
             self.bot = telebot.TeleBot(self.bot_token) if self.bot_token else None
@@ -504,6 +506,14 @@ class AutoSOCApp(ctk.CTk):
         self.assistant_output.pack(fill="both", expand=True, padx=14, pady=(0, 10))
         self.assistant_output.insert("end", "Ask a cybersecurity question. Example: How do I protect against phishing?")
 
+        self.assistant_loader = ctk.CTkLabel(
+            self.ai_chat_window,
+            text="",
+            text_color="#7fb7ff",
+            font=("Consolas", 11)
+        )
+        self.assistant_loader.pack(anchor="w", padx=14, pady=(0, 8))
+
         prompt_row = ctk.CTkFrame(self.ai_chat_window, fg_color="transparent")
         prompt_row.pack(fill="x", padx=14, pady=(0, 14))
 
@@ -543,9 +553,10 @@ class AutoSOCApp(ctk.CTk):
             return
 
         self.assistant_output.delete("0.0", "end")
-        self.assistant_output.insert("end", "Thinking...\n")
+        self.assistant_output.insert("end", f"You: {question}\n\n")
         self.assistant_button.configure(state="disabled")
         self.assistant_entry.delete(0, "end")
+        self.start_ai_loader()
         threading.Thread(target=self._run_ai_request, args=(question,), daemon=True).start()
 
     def _run_ai_request(self, question):
@@ -553,11 +564,33 @@ class AutoSOCApp(ctk.CTk):
         self.after(0, lambda: self._finish_ai_request(answer))
 
     def _finish_ai_request(self, answer):
+        self.stop_ai_loader()
         if self.assistant_output:
+            current_text = self.assistant_output.get("0.0", "end").strip()
+            prefix = f"{current_text}\n\n" if current_text else ""
             self.assistant_output.delete("0.0", "end")
-            self.assistant_output.insert("end", answer)
+            self.assistant_output.insert("end", f"{prefix}AutoSOC AI: {answer}")
         if self.assistant_button:
             self.assistant_button.configure(state="normal")
+
+    def start_ai_loader(self):
+        self.ai_loader_step = 0
+        self._tick_ai_loader()
+
+    def _tick_ai_loader(self):
+        if not getattr(self, "assistant_loader", None):
+            return
+        dots = "." * ((self.ai_loader_step % 3) + 1)
+        self.assistant_loader.configure(text=f"Analyzing{dots}")
+        self.ai_loader_step += 1
+        self.ai_loader_job = self.after(350, self._tick_ai_loader)
+
+    def stop_ai_loader(self):
+        if self.ai_loader_job:
+            self.after_cancel(self.ai_loader_job)
+            self.ai_loader_job = None
+        if getattr(self, "assistant_loader", None):
+            self.assistant_loader.configure(text="")
 
     def run_logic(self, target):
         try:
