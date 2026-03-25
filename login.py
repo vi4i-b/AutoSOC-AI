@@ -31,6 +31,36 @@ GLOW_COLOR    = "#0d2d6e"
 
 # ═══════════════════════════ HELPERS ══════════════════════════════════
 
+def _platform_layout(screen_w, screen_h, base_w, base_h, *, kind="window"):
+    """Scale splash/login windows per platform with both shrink and grow ranges."""
+    if sys.platform == "darwin":
+        width_ratio = 0.34 if kind == "splash" else 0.36
+        height_ratio = 0.82 if kind == "splash" else 0.88
+        margin = 80
+        max_scale = 1.12
+    elif sys.platform == "win32":
+        width_ratio = 0.30 if kind == "splash" else 0.32
+        height_ratio = 0.78 if kind == "splash" else 0.84
+        margin = 110
+        max_scale = 1.35
+    else:
+        width_ratio = 0.32 if kind == "splash" else 0.34
+        height_ratio = 0.80 if kind == "splash" else 0.86
+        margin = 90
+        max_scale = 1.22
+
+    min_scale = 0.78
+    width = max(int(base_w * min_scale), min(int(base_w * max_scale), int(screen_w * width_ratio)))
+    height = max(int(base_h * min_scale), min(int(base_h * max_scale), int((screen_h - margin) * height_ratio)))
+    return width, height
+
+
+def _center_geometry(screen_w, screen_h, width, height):
+    x = max((screen_w - width) // 2, 0)
+    y = max((screen_h - height) // 2, 0)
+    return f"{width}x{height}+{x}+{y}"
+
+
 def _gradient_button(parent, text, command, width=300, height=46, radius=10):
     """Canvas-based button with a left→right gradient fill."""
     frame = tk.Frame(parent, bg=BG_CARD, bd=0, highlightthickness=0)
@@ -136,50 +166,43 @@ class SplashScreen(ctk.CTkToplevel):
         self.on_done = on_done
         self.overrideredirect(True)
 
-        W, H = 480, 620
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        self.geometry(f"{W}x{H}+{(sw-W)//2}+{(sh-H)//2}")
+        W, H = _platform_layout(sw, sh, 720, 920, kind="splash")
+        splash_scale = min(W / 720, H / 920)
+        self.geometry(_center_geometry(sw, sh, W, H))
         self.attributes("-topmost", True)
         self.attributes("-alpha", 1.0)
 
-        if sys.platform == "win32":
-            MASK = "#010101"
-            self.configure(bg=MASK)
-            self.attributes("-transparentcolor", MASK)
-            cv = tk.Canvas(self, width=W, height=H, bg=MASK, highlightthickness=0)
-            cv.place(x=0, y=0)
-            self._rounded_rect(cv, 0, 0, W, H, r=28, fill=BG_CARD)
-        else:
-            self.configure(fg_color=BG_CARD)
+        splash_bg = "#14224f"
+        self.configure(fg_color=splash_bg)
+        bg = tk.Canvas(self, width=W, height=H, bg=splash_bg, highlightthickness=0, bd=0)
+        bg.place(x=0, y=0)
 
         cf = ctk.CTkFrame(self, fg_color="transparent")
-        cf.place(relx=.5, rely=.5, anchor="center")
+        cf.place(relx=.5, rely=.57, anchor="center")
+        shield_font = max(70, int(86 * splash_scale))
+        title_font = max(42, int(54 * splash_scale))
+        subtitle_font = max(18, int(20 * splash_scale))
 
         ctk.CTkLabel(cf, text="🛡️", font=("Arial", 56),
                      fg_color="transparent").pack(pady=(0, 10))
 
         row = ctk.CTkFrame(cf, fg_color="transparent")
-        row.pack()
+        row.pack(pady=(0, max(12, int(14 * splash_scale))))
         ctk.CTkLabel(row, text="AutoSOC",
-                     font=ctk.CTkFont("Helvetica", 30, "bold"),
+                     font=ctk.CTkFont("Helvetica", title_font, "bold"),
                      text_color=TEXT_PRIMARY,
                      fg_color="transparent").pack(side="left")
         ctk.CTkLabel(row, text="AI",
-                     font=ctk.CTkFont("Helvetica", 30, "bold"),
+                     font=ctk.CTkFont("Helvetica", title_font, "bold"),
                      text_color=ACCENT_CYAN,
                      fg_color="transparent").pack(side="left")
 
         ctk.CTkLabel(cf, text="Cyber Shield v2.6",
-                     font=ctk.CTkFont("Consolas", 12),
-                     text_color=TEXT_MUTED,
-                     fg_color="transparent").pack(pady=(6, 0))
-
-    def _rounded_rect(self, canvas, x1, y1, x2, y2, r, **kw):
-        pts = [x1+r, y1, x2-r, y1, x2, y1, x2, y1+r,
-               x2, y2-r, x2, y2, x2-r, y2, x1+r, y2,
-               x1, y2, x1, y2-r, x1, y1+r, x1, y1]
-        canvas.create_polygon(pts, smooth=True, **kw)
+                     font=ctk.CTkFont("Helvetica", subtitle_font),
+                     text_color="#6a89ba",
+                     fg_color="transparent").pack()
 
     def fade_out(self):
         a = self.attributes("-alpha")
@@ -203,12 +226,10 @@ class LoginWindow(ctk.CTk):
         self.resizable(False, False)
         self.configure(fg_color=BG_DEEP)
 
-        W, H = 480, 660
-        self.geometry(f"{W}x{H}")
-        self.update_idletasks()
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        self.geometry(f"{W}x{H}+{(sw-W)//2}+{(sh-H)//2}")
+        self.window_width, self.window_height = _platform_layout(sw, sh, 480, 660, kind="window")
+        self.geometry(_center_geometry(sw, sh, self.window_width, self.window_height))
 
         self.withdraw()
         self._show_splash()
@@ -224,7 +245,13 @@ class LoginWindow(ctk.CTk):
 
     # ── build UI ─────────────────────────────────────────────────────
     def _build_ui(self):
-        W, H = 480, 660
+        W, H = self.window_width, self.window_height
+        card_width = max(min(W - 64, int(W * 0.82)), 300)
+        card_height = max(min(H - 90, int(H * 0.84)), 470)
+        form_pad_x = max(int(card_width * 0.09), 24)
+        wraplength = max(card_width - (form_pad_x * 2), 220)
+        title_font = max(26, min(32, int(card_width * 0.075)))
+        subtitle_font = max(11, min(13, int(card_width * 0.032)))
 
         # ── Background canvas ──
         bg = tk.Canvas(self, width=W, height=H,
@@ -233,9 +260,8 @@ class LoginWindow(ctk.CTk):
         _draw_starfield(bg, W, H)
 
         # ── Card ──────────────────────────────────────────────────────
-        CARD_W, CARD_H = 360, 520
         card = ctk.CTkFrame(self,
-                            width=CARD_W, height=CARD_H,
+                            width=card_width, height=card_height,
                             fg_color=BG_CARD,
                             corner_radius=22,
                             border_width=1,
@@ -251,23 +277,23 @@ class LoginWindow(ctk.CTk):
         title_row = ctk.CTkFrame(card, fg_color="transparent")
         title_row.pack()
         ctk.CTkLabel(title_row, text="AutoSOC",
-                     font=ctk.CTkFont("Helvetica", 26, "bold"),
+                     font=ctk.CTkFont("Helvetica", title_font, "bold"),
                      text_color=TEXT_PRIMARY,
                      fg_color="transparent").pack(side="left")
         ctk.CTkLabel(title_row, text="AI",
-                     font=ctk.CTkFont("Helvetica", 26, "bold"),
+                     font=ctk.CTkFont("Helvetica", title_font, "bold"),
                      text_color=ACCENT_CYAN,
                      fg_color="transparent").pack(side="left")
 
         ctk.CTkLabel(card,
                      text="Təhlükəsizlik monitorinq sistemi",
-                     font=ctk.CTkFont("Helvetica", 11),
+                     font=ctk.CTkFont("Helvetica", subtitle_font),
                      text_color=TEXT_MUTED,
                      fg_color="transparent").pack(pady=(4, 20))
 
         # ── Form ───────────────────────────────────────────────────────
         form = ctk.CTkFrame(card, fg_color="transparent")
-        form.pack(padx=32, fill="x")
+        form.pack(padx=form_pad_x, fill="x")
 
         # Username
         ctk.CTkLabel(form, text="İstifadəçi adı",
@@ -322,7 +348,7 @@ class LoginWindow(ctk.CTk):
             form, text="",
             font=ctk.CTkFont("Helvetica", 11),
             text_color="#ff5555",
-            wraplength=280
+            wraplength=wraplength
         )
         self.error_label.pack(pady=(0, 6))
 
@@ -330,7 +356,7 @@ class LoginWindow(ctk.CTk):
         btn_frame = _gradient_button(
             form, text="Daxil ol",
             command=self.attempt_login,
-            width=296, height=46
+            width=card_width - (form_pad_x * 2), height=46
         )
         btn_frame.pack(fill="x", pady=(0, 8))
 

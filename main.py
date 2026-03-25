@@ -3,6 +3,7 @@ import threading
 import socket
 import telebot
 import os
+import json
 from tkinter import messagebox
 
 # Импорт твоих модулей
@@ -15,22 +16,46 @@ from ai_expert import AISecurityExpert
 ctk.set_appearance_mode("dark")
 
 
+def load_env_file(path=".env"):
+    if not os.path.exists(path):
+        return
+
+    try:
+        with open(path, "r", encoding="utf-8") as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    except OSError:
+        pass
+
+
 class AutoSOCApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+        load_env_file()
 
         # --- КОНФИГУРАЦИЯ ---
-        self.bot_token = "8692665055:AAFJin9pRNYhx-Y9BjDriSV2E_DEjCJoblI"
-        self.chat_id = "1863304152"
-
         self.db = SOCDatabase()
+        latest_tg_user = self.db.get_latest_telegram_user()
+        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        if not self.chat_id and latest_tg_user:
+            self.chat_id = str(latest_tg_user[1])
         self.ai_expert = AISecurityExpert()
         self.guard = NetworkGuard(self.on_threat_detected)
+        self.last_scan_data = []
+        self.ai_chat_window = None
 
         try:
-            self.bot = telebot.TeleBot(self.bot_token)
+            self.bot = telebot.TeleBot(self.bot_token) if self.bot_token else None
         except:
             self.bot = None
+
+        if self.bot:
+            self.start_telegram_listener()
 
         # Окно программы
         self.title("AutoSOC AI: Cyber Shield v2.6")
@@ -147,7 +172,8 @@ class AutoSOCApp(ctk.CTk):
             font=("Consolas", 12)
         )
         self.tg_entry.pack(padx=20, pady=5)
-        self.tg_entry.insert(0, self.chat_id)
+        if self.chat_id:
+            self.tg_entry.insert(0, self.chat_id)
 
         self.tg_hint = ctk.CTkLabel(
             self.sidebar,
@@ -216,6 +242,68 @@ class AutoSOCApp(ctk.CTk):
         self.result_box.tag_config("success", foreground="#2ecc71")
         self.result_box.tag_config("ai", foreground="#3498db")
         self.result_box.tag_config("info", foreground="#f1c40f")
+
+        self.assistant_frame = ctk.CTkFrame(self.main_frame, fg_color="#0b1020", border_width=1, border_color="#1d2947")
+        self.assistant_frame.pack(pady=(0, 20), padx=25, fill="x")
+
+        self.assistant_title = ctk.CTkLabel(
+            self.assistant_frame,
+            text="AI Assistant",
+            text_color="#00d4ff",
+            font=("Arial", 15, "bold")
+        )
+        self.assistant_title.pack(anchor="w", padx=14, pady=(12, 6))
+
+        self.assistant_output = ctk.CTkTextbox(
+            self.assistant_frame,
+            height=110,
+            fg_color="#09101a",
+            text_color="#d9e6ff",
+            font=("Consolas", 12)
+        )
+        self.assistant_output.pack(fill="x", padx=14, pady=(0, 10))
+        self.assistant_output.insert("end", "AI assistant hazırdır. Sual verin və ya son scan nəticəsini izah etməyimi istəyin.")
+
+        self.assistant_prompt_row = ctk.CTkFrame(self.assistant_frame, fg_color="transparent")
+        self.assistant_prompt_row.pack(fill="x", padx=14, pady=(0, 14))
+
+        self.assistant_entry = ctk.CTkEntry(
+            self.assistant_prompt_row,
+            height=38,
+            placeholder_text="Məsələn: 445 portu nə üçündür?",
+            fg_color="#09101a"
+        )
+        self.assistant_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self.assistant_button = ctk.CTkButton(
+            self.assistant_prompt_row,
+            text="Soruş",
+            width=120,
+            fg_color="#1f538d",
+            command=self.ask_ai_assistant
+        )
+        self.assistant_button.pack(side="left")
+        self.bind("<Control-Return>", lambda e: self.ask_ai_assistant())
+        self.assistant_frame.pack_forget()
+        self.assistant_output = None
+        self.assistant_entry = None
+        self.assistant_button = None
+
+        self.ai_fab = ctk.CTkButton(
+            self,
+            text="AI",
+            width=62,
+            height=62,
+            corner_radius=31,
+            fg_color="#00b7ff",
+            hover_color="#1593d1",
+            text_color="#06111b",
+            font=("Arial", 18, "bold"),
+            command=self.open_ai_chat_window
+        )
+        self.ai_fab.place(relx=1.0, rely=1.0, x=-28, y=-28, anchor="se")
+        self.ai_fab.lift()
+        self.after(700, self.animate_ai_fab)
 
     # -------------------------------------------------------
     # PORT MANAGEMENT
@@ -322,23 +410,179 @@ class AutoSOCApp(ctk.CTk):
         )
         threading.Thread(target=self.send_telegram_alert, args=(alert_tg,), daemon=True).start()
 
+    def start_telegram_listener(self):
+        @self.bot.message_handler(commands=["start", "id"])
+        def _start_handler(message):
+            raw_payload = json.dumps(message.json, ensure_ascii=False) if getattr(message, "json", None) else "{}"
+            print(f"[TELEGRAM][RAW] {raw_payload}")
+
+            from_user = getattr(message, "from_user", None)
+            user_id = getattr(from_user, "id", None)
+            chat_id = getattr(getattr(message, "chat", None), "id", None)
+            print(f"[TELEGRAM][PARSED] from.id={user_id} chat.id={chat_id}")
+
+            if user_id is None or chat_id is None:
+                return
+
+            self.db.upsert_telegram_user(
+                telegram_user_id=str(user_id),
+                telegram_chat_id=str(chat_id),
+                username=getattr(from_user, "username", "") if from_user else "",
+                first_name=getattr(from_user, "first_name", "") if from_user else "",
+                last_name=getattr(from_user, "last_name", "") if from_user else "",
+                raw_payload=raw_payload,
+            )
+
+            self.chat_id = str(chat_id)
+            self.after(0, self._sync_telegram_chat_id_ui)
+            self.bot.reply_to(message, f"Your Telegram ID is: {user_id}\nChat ID is: {chat_id}")
+
+        threading.Thread(target=self._poll_telegram_bot, daemon=True).start()
+
+    def _poll_telegram_bot(self):
+        try:
+            self.bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=20)
+        except Exception as exc:
+            print(f"[TELEGRAM][POLLING_ERROR] {exc}")
+
+    def _sync_telegram_chat_id_ui(self):
+        if not hasattr(self, "tg_entry"):
+            return
+        self.tg_entry.delete(0, "end")
+        self.tg_entry.insert(0, self.chat_id)
+        self.tg_status.configure(text="Telegram ID captured from bot", text_color="#2ecc71")
+
+    def animate_ai_fab(self):
+        if not hasattr(self, "ai_fab"):
+            return
+
+        current = self.ai_fab.cget("fg_color")
+        next_color = "#1593d1" if current == "#00b7ff" else "#00b7ff"
+        self.ai_fab.configure(fg_color=next_color)
+        self.after(900, self.animate_ai_fab)
+
+    def open_ai_chat_window(self):
+        if self.ai_chat_window and self.ai_chat_window.winfo_exists():
+            self.ai_chat_window.deiconify()
+            self.ai_chat_window.lift()
+            self.ai_chat_window.focus()
+            return
+
+        self.ai_chat_window = ctk.CTkToplevel(self)
+        self.ai_chat_window.title("AutoSOC AI Assistant")
+        self.ai_chat_window.geometry("420x520")
+        self.ai_chat_window.attributes("-topmost", True)
+        self.ai_chat_window.configure(fg_color="#0b1020")
+        self.ai_chat_window.protocol("WM_DELETE_WINDOW", self.close_ai_chat_window)
+
+        header = ctk.CTkFrame(self.ai_chat_window, fg_color="transparent")
+        header.pack(fill="x", padx=14, pady=(14, 8))
+
+        ctk.CTkLabel(
+            header,
+            text="AI Assistant",
+            text_color="#00d4ff",
+            font=("Arial", 16, "bold")
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            header,
+            text="X",
+            width=34,
+            fg_color="#18233d",
+            hover_color="#243252",
+            command=self.close_ai_chat_window
+        ).pack(side="right")
+
+        self.assistant_output = ctk.CTkTextbox(
+            self.ai_chat_window,
+            height=340,
+            fg_color="#09101a",
+            text_color="#d9e6ff",
+            font=("Consolas", 12)
+        )
+        self.assistant_output.pack(fill="both", expand=True, padx=14, pady=(0, 10))
+        self.assistant_output.insert("end", "Ask a cybersecurity question. Example: How do I protect against phishing?")
+
+        prompt_row = ctk.CTkFrame(self.ai_chat_window, fg_color="transparent")
+        prompt_row.pack(fill="x", padx=14, pady=(0, 14))
+
+        self.assistant_entry = ctk.CTkEntry(
+            prompt_row,
+            height=40,
+            placeholder_text="Type your cybersecurity question..."
+        )
+        self.assistant_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self.assistant_button = ctk.CTkButton(
+            prompt_row,
+            text="Send",
+            width=90,
+            fg_color="#1f538d",
+            command=self.ask_ai_assistant
+        )
+        self.assistant_button.pack(side="left")
+        self.assistant_entry.bind("<Return>", lambda e: self.ask_ai_assistant())
+
+    def close_ai_chat_window(self):
+        if self.ai_chat_window and self.ai_chat_window.winfo_exists():
+            self.ai_chat_window.withdraw()
+
     def start_scan_thread(self):
         target = self.ip_entry.get()
         self.btn_scan.configure(state="disabled", text="⏳ Taranır...")
         self.result_box.delete("0.0", "end")
         threading.Thread(target=self.run_logic, args=(target,), daemon=True).start()
 
+    def ask_ai_assistant(self):
+        if not self.assistant_entry or not self.assistant_output:
+            self.open_ai_chat_window()
+
+        question = self.assistant_entry.get().strip()
+        if not question:
+            return
+
+        self.assistant_output.delete("0.0", "end")
+        self.assistant_output.insert("end", "Thinking...\n")
+        self.assistant_button.configure(state="disabled")
+        self.assistant_entry.delete(0, "end")
+        threading.Thread(target=self._run_ai_request, args=(question,), daemon=True).start()
+
+    def _run_ai_request(self, question):
+        answer = self.ai_expert.answer_question(question, self.last_scan_data)
+        self.after(0, lambda: self._finish_ai_request(answer))
+
+    def _finish_ai_request(self, answer):
+        if self.assistant_output:
+            self.assistant_output.delete("0.0", "end")
+            self.assistant_output.insert("end", answer)
+        if self.assistant_button:
+            self.assistant_button.configure(state="normal")
+
     def run_logic(self, target):
         try:
             scanner = NetworkScanner()
             analyzer = RiskAnalyzer()
-            data = scanner.scan_network(target)
+            data = scanner.scan_network(target, ports=list(self.port_definitions.keys()))
             self.result_box.insert("end", f">>> ŞƏBƏKƏ TƏFTİŞİ: {target}\n", "ai")
 
+            self.last_scan_data = data
+            if self.assistant_output:
+                self.assistant_output.delete("0.0", "end")
+                self.assistant_output.insert("end", self.ai_expert.summarize_scan(data))
             total_risks = 0
             for dev in data:
                 vendor = list(dev['vendor'].values())[0] if dev['vendor'] else "Cihaz"
                 self.result_box.insert("end", f"\n[+] {vendor} ({dev['ip']})\n")
+                open_ports = dev.get('ports', [])
+                if open_ports:
+                    ports_view = ", ".join(
+                        f"{item['port']} ({self.port_definitions.get(item['port'], item.get('name', 'Unknown'))})"
+                        for item in open_ports
+                    )
+                    self.result_box.insert("end", f"    - AГ‡IQ PORTLAR: {ports_view}\n", "info")
+                else:
+                    self.result_box.insert("end", "    - SeГ§ilmiЕџ 22 port ГјzrЙ™ aГ§Д±q servis tapД±lmadД±\n", "success")
 
                 risks = analyzer.analyze(dev['ports'])
                 for r in risks:

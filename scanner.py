@@ -2,11 +2,17 @@ import nmap
 
 
 class NetworkScanner:
+    DEFAULT_PORTS = [
+        21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443,
+        445, 1433, 1521, 3306, 3389, 5432, 5900, 6379,
+        8080, 8443, 27017
+    ]
+
     def __init__(self):
         # Инициализируем порт-сканер Nmap
         self.nm = nmap.PortScanner()
 
-    def scan_network(self, target):
+    def scan_network(self, target, ports=None):
         """
         Сканирует указанный IP или диапазон (например, 192.168.1.1/24).
         Возвращает список устройств с открытыми портами и данными о вендоре.
@@ -14,7 +20,9 @@ class NetworkScanner:
         try:
             # -F (Fast mode) - сканируем самые популярные порты для скорости
             # -O (OS detection) требует прав админа, поэтому используем стандартный скан
-            self.nm.scan(hosts=target, arguments='-F')
+            selected_ports = ports or self.DEFAULT_PORTS
+            ports_arg = ",".join(str(port) for port in selected_ports)
+            self.nm.scan(hosts=target, ports=ports_arg, arguments='-sT -Pn -n')
 
             scan_results = []
 
