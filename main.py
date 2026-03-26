@@ -714,7 +714,7 @@ class AutoSOCApp(ctk.CTk):
     def _refresh_dashboard_metrics(self):
         total_devices = len(self.last_scan_data)
         open_ports = self._count_live_open_ports()
-        risk_count = self._count_live_risky_ports()
+        risk_count = self._count_live_detected_risks()
         risk_score = min(risk_count * 25, 100)
 
         self.metric_total_devices.configure(text=str(total_devices))
@@ -735,12 +735,18 @@ class AutoSOCApp(ctk.CTk):
             return sum(1 for switch in self.switches.values() if switch.get())
         return 0
 
-    def _count_live_risky_ports(self):
-        analyzer = RiskAnalyzer()
-        risky_ports = set(analyzer.threats.keys())
-        if self.switches:
-            return sum(1 for port, switch in self.switches.items() if switch.get() and port in risky_ports)
-        return 0
+    def _count_live_detected_risks(self):
+        if not self.last_scan_data:
+            return 0
+
+        risk_count = 0
+        for risk in self._collect_risks(self.last_scan_data):
+            port = risk["port"]
+            switch = self.switches.get(port)
+            if switch and not switch.get():
+                continue
+            risk_count += 1
+        return risk_count
 
     def _check_telegram_status(self):
         if not self.telegram_client.enabled:
