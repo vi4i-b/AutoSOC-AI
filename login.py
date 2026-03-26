@@ -18,19 +18,19 @@ ctk.set_window_scaling(1.0)
 ctk.set_widget_scaling(1.0)
 
 # ─────────────────────────── COLOUR PALETTE ───────────────────────────
-BG_DEEP       = "#080e1f"      # outermost background
-BG_CARD       = "#0d1b3e"      # card fill
-CARD_BORDER   = "#1b3060"      # card border
-FIELD_BG      = "#0a1428"      # input field background
-FIELD_BORDER  = "#1b3060"      # input border (idle)
-FIELD_FOCUS   = "#2a6dd9"      # input border (focused)
-TEXT_PRIMARY  = "#e8f0ff"      # main text
-TEXT_MUTED    = "#5a80a8"      # labels / placeholders
-ACCENT_CYAN   = "#00d4ff"      # "AI" highlight / gradient end
-BTN_LEFT      = "#1a7fd4"      # gradient button left  (blue)
-BTN_RIGHT     = "#00c8a0"      # gradient button right (teal-green)
-BTN_HOVER_L   = "#2290e8"
-BTN_HOVER_R   = "#00ddb0"
+BG_DEEP       = "#07111b"      # outermost background
+BG_CARD       = "#0b1623"      # main card fill
+CARD_BORDER   = "#1d3347"      # card border
+FIELD_BG      = "#0a1522"      # input field background
+FIELD_BORDER  = "#29425c"      # input border (idle)
+FIELD_FOCUS   = "#2b7fff"      # input border (focused)
+TEXT_PRIMARY  = "#f4f8fc"      # main text
+TEXT_MUTED    = "#87a5c0"      # labels / placeholders
+ACCENT_CYAN   = "#77beff"      # "AI" highlight / accent
+BTN_LEFT      = "#2b7fff"      # primary button
+BTN_RIGHT     = "#2b7fff"
+BTN_HOVER_L   = "#1f62ca"
+BTN_HOVER_R   = "#1f62ca"
 STAR_COLORS   = ["#ffffff", "#a0c8ff", "#60a0e0", "#304878"]
 GLOW_COLOR    = "#0d2d6e"
 TELEGRAM_BOT_URL = os.getenv("TELEGRAM_BOT_URL", "https://t.me/AutoSOC_Baku_Bot").strip()
@@ -91,23 +91,11 @@ class TelegramBotClient:
 # ═══════════════════════════ HELPERS ══════════════════════════════════
 
 def _platform_layout(screen_w, screen_h, base_w, base_h, *, kind="window"):
-    """Scale splash/login windows per platform with both shrink and grow ranges."""
-    if sys.platform == "darwin":
-        width_ratio = 0.34 if kind == "splash" else 0.36
-        height_ratio = 0.82 if kind == "splash" else 0.88
-        margin = 80
-        max_scale = 1.12
-    elif sys.platform == "win32":
-        width_ratio = 0.30 if kind == "splash" else 0.32
-        height_ratio = 0.78 if kind == "splash" else 0.84
-        margin = 110
-        max_scale = 1.35
-    else:
-        width_ratio = 0.32 if kind == "splash" else 0.34
-        height_ratio = 0.80 if kind == "splash" else 0.86
-        margin = 90
-        max_scale = 1.22
-
+    """Scale splash/login windows consistently across platforms."""
+    width_ratio = 0.32 if kind == "splash" else 0.34
+    height_ratio = 0.80 if kind == "splash" else 0.86
+    margin = 90
+    max_scale = 1.20
     min_scale = 0.78
     width = max(int(base_w * min_scale), min(int(base_w * max_scale), int(screen_w * width_ratio)))
     height = max(int(base_h * min_scale), min(int(base_h * max_scale), int((screen_h - margin) * height_ratio)))
@@ -190,31 +178,7 @@ def _gradient_button(parent, text, command, width=300, height=46, radius=10):
 
 def _draw_starfield(canvas, w, h):
     """Paint animated gradient background + stars on a tk.Canvas."""
-    # Vertical gradient
-    steps = h
-    for i in range(steps):
-        t = i / steps
-        r = int(8  + t * 10)
-        g = int(14 + t * 18)
-        b = int(31 + t * 40)
-        canvas.create_line(0, i, w, i, fill=f"#{r:02x}{g:02x}{b:02x}")
-
-    # Soft glow blobs
-    canvas.create_oval(-120, -120, 260, 260,
-                       fill="#0b254d", outline="")
-    canvas.create_oval(w - 200, h - 200, w + 120, h + 120,
-                       fill="#0a1e45", outline="")
-    canvas.create_oval(w // 2 - 80, 0, w // 2 + 80, 160,
-                       fill="#0d2860", outline="", stipple="gray25")
-
-    # Stars
-    random.seed(99)
-    for _ in range(90):
-        x = random.randint(0, w)
-        y = random.randint(0, h)
-        size = random.choices([1, 1, 2], weights=[6, 3, 1])[0]
-        col  = random.choice(STAR_COLORS)
-        canvas.create_oval(x, y, x + size, y + size, fill=col, outline="")
+    canvas.create_rectangle(0, 0, w, h, fill=BG_DEEP, outline="")
 
 
 # ═══════════════════════════ SPLASH ═══════════════════════════════════
@@ -224,6 +188,8 @@ class SplashScreen(ctk.CTkToplevel):
         super().__init__(parent)
         self.on_done = on_done
         self.logo_image = None
+        self._fade_after_id = None
+        self._closed = False
         self.overrideredirect(True)
 
         sw = self.winfo_screenwidth()
@@ -234,13 +200,16 @@ class SplashScreen(ctk.CTkToplevel):
         self.attributes("-topmost", True)
         self.attributes("-alpha", 1.0)
 
-        splash_bg = "#14224f"
+        splash_bg = BG_DEEP
         self.configure(fg_color=splash_bg)
         bg = tk.Canvas(self, width=W, height=H, bg=splash_bg, highlightthickness=0, bd=0)
         bg.place(x=0, y=0)
 
+        bg.create_oval(-140, -120, 240, 220, fill="#0b1623", outline="")
+        bg.create_oval(W - 220, H - 200, W + 80, H + 80, fill="#0a1522", outline="")
+
         cf = ctk.CTkFrame(self, fg_color="transparent")
-        cf.place(relx=.5, rely=.57, anchor="center")
+        cf.place(relx=.5, rely=.5, anchor="center")
         title_font = max(42, int(54 * splash_scale))
         subtitle_font = max(18, int(20 * splash_scale))
 
@@ -250,7 +219,7 @@ class SplashScreen(ctk.CTkToplevel):
                 logo_image = tk.PhotoImage(file=logo_path)
                 self.logo_image = logo_image
                 tk.Label(cf, image=self.logo_image, text="",
-                         bg=splash_bg, bd=0, highlightthickness=0).pack(pady=(0, 6))
+                         bg=splash_bg, bd=0, highlightthickness=0).pack(pady=(0, 2))
             except tk.TclError:
                 ctk.CTkLabel(cf, text="🛡️", font=("Arial", 56),
                              fg_color="transparent").pack(pady=(0, 10))
@@ -271,17 +240,33 @@ class SplashScreen(ctk.CTkToplevel):
 
         ctk.CTkLabel(cf, text="Cyber Shield v2.6",
                      font=ctk.CTkFont("Helvetica", subtitle_font),
-                     text_color="#6a89ba",
+                     text_color=TEXT_MUTED,
                      fg_color="transparent").pack()
 
     def fade_out(self):
+        if self._closed or not self.winfo_exists():
+            return
         a = self.attributes("-alpha")
         if a > 0.05:
             self.attributes("-alpha", a - 0.05)
-            self.after(20, self.fade_out)
+            self._fade_after_id = self.after(20, self.fade_out)
         else:
+            self.safe_close()
+            if callable(self.on_done):
+                self.on_done()
+
+    def safe_close(self):
+        if self._closed:
+            return
+        self._closed = True
+        if self._fade_after_id is not None:
+            try:
+                self.after_cancel(self._fade_after_id)
+            except tk.TclError:
+                pass
+            self._fade_after_id = None
+        if self.winfo_exists():
             self.destroy()
-            self.on_done()
 
 
 # ═══════════════════════════ LOGIN WINDOW ═════════════════════════════
@@ -291,6 +276,9 @@ class LoginWindow(ctk.CTk):
         super().__init__()
         self.on_success = on_success
         self.login_logo_image = None
+        self.splash = None
+        self._splash_after_id = None
+        self._closing = False
         load_env_file()
         init_db()
         self.telegram_client = TelegramBotClient(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
@@ -300,10 +288,11 @@ class LoginWindow(ctk.CTk):
         self.title("AutoSOC AI — Giriş")
         self.resizable(False, False)
         self.configure(fg_color=BG_DEEP)
+        self.protocol("WM_DELETE_WINDOW", self._close_window)
 
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        self.window_width, self.window_height = _platform_layout(sw, sh, 480, 660, kind="window")
+        self.window_width, self.window_height = _platform_layout(sw, sh, 1120, 720, kind="window")
         self.geometry(_center_geometry(sw, sh, self.window_width, self.window_height))
 
         self.withdraw()
@@ -314,9 +303,18 @@ class LoginWindow(ctk.CTk):
     # ── splash ──────────────────────────────────────────────────────
     def _show_splash(self):
         self.splash = SplashScreen(self, on_done=self._after_fade)
-        self.after(1600, self.splash.fade_out)
+        self._splash_after_id = self.after(1600, self._trigger_splash_fade)
+
+    def _trigger_splash_fade(self):
+        self._splash_after_id = None
+        if self._closing:
+            return
+        if self.splash and self.splash.winfo_exists():
+            self.splash.fade_out()
 
     def _after_fade(self):
+        if self._closing or not self.winfo_exists():
+            return
         self._build_ui()
         self.deiconify()
 
@@ -359,7 +357,7 @@ class LoginWindow(ctk.CTk):
             last_name=from_user.get("last_name", ""),
             raw_payload=json.dumps(update, ensure_ascii=False),
         )
-        self.after(0, lambda cid=str(chat_id): self._sync_latest_telegram_chat_id(cid))
+        self._safe_after(0, lambda cid=str(chat_id): self._sync_latest_telegram_chat_id(cid))
 
         command = text.lower().split()[0].split("@")[0]
         if command in ("/start", "/id"):
@@ -374,19 +372,47 @@ class LoginWindow(ctk.CTk):
             )
 
     def _sync_latest_telegram_chat_id(self, chat_id):
+        if self._closing or not self.winfo_exists():
+            return
         if hasattr(self, "telegram_entry") and self.telegram_entry.winfo_exists():
             self.telegram_entry.delete(0, "end")
             self.telegram_entry.insert(0, chat_id)
 
+    def _safe_after(self, delay_ms, callback):
+        if self._closing or not self.winfo_exists():
+            return None
+        try:
+            return self.after(delay_ms, callback)
+        except tk.TclError:
+            return None
+
+    def _close_window(self):
+        if self._closing:
+            return
+        self._closing = True
+        self.telegram_listener_running = False
+        if self._splash_after_id is not None:
+            try:
+                self.after_cancel(self._splash_after_id)
+            except tk.TclError:
+                pass
+            self._splash_after_id = None
+        if self.splash is not None:
+            try:
+                self.splash.safe_close()
+            except tk.TclError:
+                pass
+        self.destroy()
+
     # ── build UI ─────────────────────────────────────────────────────
     def _build_ui(self):
         W, H = self.window_width, self.window_height
-        card_width = max(min(W - 64, int(W * 0.82)), 300)
-        card_height = max(min(H - 90, int(H * 0.84)), 470)
-        form_pad_x = max(int(card_width * 0.09), 24)
-        wraplength = max(card_width - (form_pad_x * 2), 220)
-        title_font = max(26, min(32, int(card_width * 0.075)))
-        subtitle_font = max(11, min(13, int(card_width * 0.032)))
+        card_width = max(min(W - 80, 520), 420)
+        card_height = max(min(H - 90, 690), 560)
+        form_pad_x = max(int(card_width * 0.09), 26)
+        wraplength = max(card_width - (form_pad_x * 2), 260)
+        title_font = max(28, min(32, int(card_width * 0.07)))
+        subtitle_font = max(11, min(13, int(card_width * 0.026)))
 
         # ── Background canvas ──
         bg = tk.Canvas(self, width=W, height=H,
@@ -394,61 +420,74 @@ class LoginWindow(ctk.CTk):
         bg.place(x=0, y=0)
         _draw_starfield(bg, W, H)
 
-        # ── Card ──────────────────────────────────────────────────────
-        card = ctk.CTkFrame(self,
-                            width=card_width, height=card_height,
-                            fg_color=BG_CARD,
-                            corner_radius=22,
-                            border_width=1,
-                            border_color=CARD_BORDER)
+        glow = ctk.CTkFrame(
+            self,
+            width=card_width + 26,
+            height=card_height + 26,
+            fg_color="#0a1522",
+            corner_radius=30,
+            border_width=1,
+            border_color="#142433",
+        )
+        glow.place(relx=.5, rely=.5, anchor="center")
+        glow.pack_propagate(False)
+
+        card = ctk.CTkFrame(
+            glow,
+            width=card_width,
+            height=card_height,
+            fg_color="#0d1b2a",
+            corner_radius=26,
+            border_width=1,
+            border_color=CARD_BORDER,
+        )
         card.place(relx=.5, rely=.5, anchor="center")
         card.pack_propagate(False)
 
-        # ── Logo + title ───────────────────────────────────────────────
+        # ── Header ─────────────────────────────────────────────────────
         logo_path = _resource_path("assets", "autosoc_logo_login.png")
         if os.path.exists(logo_path):
             try:
                 login_logo = tk.PhotoImage(file=logo_path)
                 self.login_logo_image = login_logo
                 tk.Label(card, image=self.login_logo_image, text="",
-                         bg=BG_CARD, bd=0, highlightthickness=0).pack(pady=(22, 2))
+                         bg="#0d1b2a", bd=0, highlightthickness=0).pack(pady=(18, 6))
             except tk.TclError:
                 ctk.CTkLabel(card, text="🛡️",
                              font=("Arial", 44),
-                             fg_color="transparent").pack(pady=(30, 4))
+                             text_color=TEXT_PRIMARY,
+                             fg_color="transparent").pack(pady=(18, 6))
         else:
             ctk.CTkLabel(card, text="🛡️",
                          font=("Arial", 44),
-                         fg_color="transparent").pack(pady=(30, 4))
+                         text_color=TEXT_PRIMARY,
+                         fg_color="transparent").pack(pady=(18, 6))
 
-        title_row = ctk.CTkFrame(card, fg_color="transparent")
-        title_row.pack()
-        ctk.CTkLabel(title_row, text="AutoSOC",
-                     font=ctk.CTkFont("Helvetica", title_font, "bold"),
-                     text_color=TEXT_PRIMARY,
-                     fg_color="transparent").pack(side="left")
-        ctk.CTkLabel(title_row, text="AI",
-                     font=ctk.CTkFont("Helvetica", title_font, "bold"),
-                     text_color=ACCENT_CYAN,
-                     fg_color="transparent").pack(side="left")
+        ctk.CTkLabel(
+            card,
+            text="AutoSOC AI",
+            font=ctk.CTkFont("Helvetica", title_font, "bold"),
+            text_color=TEXT_PRIMARY,
+        ).pack()
+        ctk.CTkLabel(
+            card,
+            text="Secure access to your network monitoring cockpit",
+            font=ctk.CTkFont("Helvetica", subtitle_font),
+            text_color=TEXT_MUTED,
+            wraplength=wraplength,
+            justify="left",
+        ).pack(pady=(6, 18))
 
-        ctk.CTkLabel(card,
-                     text="Təhlükəsizlik monitorinq sistemi",
-                     font=ctk.CTkFont("Helvetica", subtitle_font),
-                     text_color=TEXT_MUTED,
-                     fg_color="transparent").pack(pady=(4, 20))
-
-        # ── Form ───────────────────────────────────────────────────────
         form = ctk.CTkScrollableFrame(
             card,
             fg_color="transparent",
             corner_radius=0,
-            scrollbar_button_color="#1b3060",
-            scrollbar_button_hover_color="#2a6dd9",
+            scrollbar_button_color="#23384d",
+            scrollbar_button_hover_color="#2b7fff",
             width=card_width - (form_pad_x * 2),
-            height=max(card_height - 220, 260),
+            height=max(card_height - 210, 300),
         )
-        form.pack(padx=form_pad_x, pady=(0, 12), fill="both", expand=True)
+        form.pack(padx=form_pad_x, pady=(0, 16), fill="both", expand=True)
 
         # Username
         ctk.CTkLabel(form, text="İstifadəçi adı",
@@ -529,7 +568,7 @@ class LoginWindow(ctk.CTk):
         ctk.CTkButton(
             tg_row,
             text="Open Bot",
-            width=82,
+            width=108,
             height=30,
             fg_color="transparent",
             border_width=1,
@@ -548,25 +587,30 @@ class LoginWindow(ctk.CTk):
             text_color="#ff5555",
             wraplength=wraplength
         )
-        self.error_label.pack(pady=(0, 6))
+        self.error_label.pack(fill="x", pady=(0, 8))
 
-        # ── Gradient login button ──────────────────────────────────────
-        btn_frame = _gradient_button(
-            form, text="Daxil ol",
+        self.btn_login = ctk.CTkButton(
+            form,
+            text="Daxil ol",
+            height=46,
+            corner_radius=14,
+            fg_color="#2b7fff",
+            hover_color="#1f62ca",
+            text_color="#f4f8fc",
+            font=ctk.CTkFont(size=14, weight="bold"),
             command=self.attempt_login,
-            width=card_width - (form_pad_x * 2), height=46
         )
-        btn_frame.pack(fill="x", pady=(0, 8))
+        self.btn_login.pack(fill="x", pady=(0, 10))
 
         # ── Register (outline style) ───────────────────────────────────
         self.btn_register = ctk.CTkButton(
             form, text="📝  Qeydiyyat", height=40,
             fg_color="transparent",
             border_width=1, border_color=FIELD_BORDER,
-            hover_color="#121e38",
-            text_color=TEXT_MUTED,
+            hover_color="#172433",
+            text_color="#dbe8f4",
             font=ctk.CTkFont("Helvetica", 12),
-            corner_radius=10,
+            corner_radius=14,
             command=self.attempt_register
         )
         self.btn_register.pack(fill="x", pady=(0, 10))
@@ -583,7 +627,9 @@ class LoginWindow(ctk.CTk):
             text_color=TEXT_MUTED,
             checkbox_width=16, checkbox_height=16,
             border_color=FIELD_BORDER,
-            checkmark_color=ACCENT_CYAN
+            fg_color="#2b7fff",
+            hover_color="#1f62ca",
+            checkmark_color="#f4f8fc"
         ).pack(side="left")
 
         ctk.CTkLabel(
@@ -619,8 +665,7 @@ class LoginWindow(ctk.CTk):
         user = verify_user(u, p)
         if user:
             save_remember(u) if self.remember_var.get() else clear_remember()
-            self.telegram_listener_running = False
-            self.destroy()
+            self._close_window()
             self.on_success(user)
         else:
             self.error_label.configure(text="❌ İstifadəçi adı və ya şifrə yanlışdır!")
