@@ -5,65 +5,66 @@ class NetworkScanner:
     DEFAULT_PORTS = [
         21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443,
         445, 1433, 1521, 3306, 3389, 5432, 5900, 6379,
-        8080, 8443, 27017
+        8080, 8443, 27017,
     ]
 
     def __init__(self):
-        # Инициализируем порт-сканер Nmap
         self.nm = nmap.PortScanner()
 
     def scan_network(self, target, ports=None):
-        """
-        Сканирует указанный IP или диапазон (например, 192.168.1.1/24).
-        Возвращает список устройств с открытыми портами и данными о вендоре.
-        """
         try:
-            # -F (Fast mode) - сканируем самые популярные порты для скорости
-            # -O (OS detection) требует прав админа, поэтому используем стандартный скан
             selected_ports = ports or self.DEFAULT_PORTS
             ports_arg = ",".join(str(port) for port in selected_ports)
-            self.nm.scan(hosts=target, ports=ports_arg, arguments='-sT -Pn -n')
+            self.nm.scan(hosts=target, ports=ports_arg, arguments="-sT -Pn -n")
 
             scan_results = []
 
             for host in self.nm.all_hosts():
-                # Получаем данные о производителе (vendor)
-                # Nmap берет их из базы данных соответствия MAC-адресов
-                vendor_data = self.nm[host].get('vendor', {})
+                vendor_data = self.nm[host].get("vendor", {})
+                tcp_data = self.nm[host].get("tcp", {})
+                summary = {"requested": len(selected_ports), "open": 0, "closed": 0, "filtered": 0, "other": 0}
 
-                # Формируем структуру данных для одного устройства
                 device_info = {
                     "ip": host,
                     "status": self.nm[host].state(),
-                    "vendor": vendor_data,  # Словарь типа {'00:11:22...': 'TP-Link'}
-                    "ports": []
+                    "vendor": vendor_data,
+                    "ports": [],
+                    "scanned_ports": list(selected_ports),
+                    "port_scan_summary": summary,
                 }
 
-                # Собираем все открытые TCP порты
-                if 'tcp' in self.nm[host]:
-                    for port in self.nm[host]['tcp']:
-                        port_data = self.nm[host]['tcp'][port]
-                        if port_data['state'] == 'open':
-                            device_info["ports"].append({
+                for port in selected_ports:
+                    port_data = tcp_data.get(port, {})
+                    state = port_data.get("state", "other")
+
+                    if state == "open":
+                        summary["open"] += 1
+                        device_info["ports"].append(
+                            {
                                 "port": port,
-                                "name": port_data['name'],
-                                "product": port_data.get('product', ''),
-                                "version": port_data.get('version', '')
-                            })
+                                "name": port_data.get("name", ""),
+                                "product": port_data.get("product", ""),
+                                "version": port_data.get("version", ""),
+                            }
+                        )
+                    elif state == "closed":
+                        summary["closed"] += 1
+                    elif state == "filtered":
+                        summary["filtered"] += 1
+                    else:
+                        summary["other"] += 1
 
                 scan_results.append(device_info)
 
             return scan_results
-
-        except Exception as e:
-            print(f"Skaner xətası: {e}")
+        except Exception as exc:
+            print(f"Scanner error: {exc}")
             return []
 
 
 if __name__ == "__main__":
-    # Тестовый запуск модуля
     scanner = NetworkScanner()
-    print("Skan başlayır...")
+    print("Starting scan...")
     results = scanner.scan_network("127.0.0.1")
     for res in results:
         print(f"IP: {res['ip']}, Vendor: {res['vendor']}")

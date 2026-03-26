@@ -12,6 +12,7 @@ from tkinter import messagebox
 
 from ai_expert import AISecurityExpert
 from analyzer import RiskAnalyzer
+from auth import get_user_telegram, update_user_telegram
 from database import SOCDatabase
 from guard import NetworkGuard
 from scanner import NetworkScanner
@@ -86,21 +87,30 @@ class AutoSOCApp(ctk.CTk):
         "Explain the current risk posture",
     ]
 
-    def __init__(self):
+    def __init__(self, current_user=None):
         super().__init__()
         load_env_file()
 
         self.db = SOCDatabase()
+        self.current_user = current_user or {}
         saved_chat_id = self.db.get_setting("telegram_chat_id", "").strip()
         latest_tg_user = self.db.get_latest_telegram_user()
+        user_tg = get_user_telegram(self.current_user.get("username", "")) if self.current_user.get("username") else None
         self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-        self.chat_id = saved_chat_id or os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        self.chat_id = (
+            (user_tg or {}).get("telegram_chat_id", "").strip()
+            or self.current_user.get("telegram_chat_id", "").strip()
+            or saved_chat_id
+            or os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        )
         if not self.chat_id and latest_tg_user:
             self.chat_id = str(latest_tg_user[1])
 
         self.telegram_bot_url = os.getenv("TELEGRAM_BOT_URL", "https://t.me/AutoSOC_Baku_Bot").strip()
         self.telegram_client = TelegramBotClient(self.bot_token)
         self.telegram_listener_running = False
+        self.telegram_listener_healthy = False
+        self.telegram_bot_online = False
         self.telegram_offset = None
         self.bot_identity = None
 
@@ -158,6 +168,29 @@ class AutoSOCApp(ctk.CTk):
 
         if self.telegram_client.enabled:
             self.start_telegram_listener()
+
+    def _ui(self, callback):
+        self.after(0, callback)
+
+    def _append_result(self, text, tag=None, index="end"):
+        def update():
+            if tag:
+                self.result_box.insert(index, text, tag)
+            else:
+                self.result_box.insert(index, text)
+            self.result_box.see("end")
+
+        self._ui(update)
+
+    def _set_scan_summary_text(self, text):
+        def update():
+            self.assistant_summary.delete("0.0", "end")
+            self.assistant_summary.insert("end", text)
+
+        self._ui(update)
+
+    def _set_status(self, text, color):
+        self._ui(lambda: self.status_label.configure(text=text, text_color=color))
 
     def _build_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=330, fg_color="#0b1623", corner_radius=0)
@@ -680,31 +713,49 @@ class AutoSOCApp(ctk.CTk):
 
     def _refresh_dashboard_metrics(self):
         total_devices = len(self.last_scan_data)
-        open_ports = sum(len(device.get("ports", [])) for device in self.last_scan_data)
-        risk_count = len(self._collect_risks(self.last_scan_data))
+        open_ports = self._count_live_open_ports()
+        risk_count = self._count_live_risky_ports()
         risk_score = min(risk_count * 25, 100)
 
         self.metric_total_devices.configure(text=str(total_devices))
         self.metric_open_ports.configure(text=str(open_ports))
         self.metric_risk.configure(text=f"{risk_score}%")
 
-        if self.telegram_client.enabled and self.chat_id:
+        if self.telegram_bot_online and self.chat_id and self.telegram_listener_healthy:
             self.metric_tg.configure(text="Ready", text_color="#6de0a8")
-        elif self.telegram_client.enabled:
+        elif self.telegram_bot_online and self.chat_id:
+            self.metric_tg.configure(text="Bot Online", text_color="#7fe3b1")
+        elif self.telegram_bot_online:
             self.metric_tg.configure(text="No Chat ID", text_color="#ffd36b")
         else:
             self.metric_tg.configure(text="Offline", text_color="#ff7c85")
 
+    def _count_live_open_ports(self):
+        if self.switches:
+            return sum(1 for switch in self.switches.values() if switch.get())
+        return 0
+
+    def _count_live_risky_ports(self):
+        analyzer = RiskAnalyzer()
+        risky_ports = set(analyzer.threats.keys())
+        if self.switches:
+            return sum(1 for port, switch in self.switches.items() if switch.get() and port in risky_ports)
+        return 0
+
     def _check_telegram_status(self):
         if not self.telegram_client.enabled:
+            self.telegram_bot_online = False
+            self.telegram_listener_healthy = False
             self.tg_status.configure(
                 text="Telegram bot token tapılmadı. .env faylında TELEGRAM_BOT_TOKEN əlavə edin.",
                 text_color="#ff8a8a",
             )
+            self._refresh_dashboard_metrics()
             return
 
         ok, data = self.telegram_client.get_me()
         if ok:
+            self.telegram_bot_online = True
             username = data.get("result", {}).get("username", "bot")
             self.bot_identity = username
             text = f"Bot online: @{username}"
@@ -712,6 +763,8 @@ class AutoSOCApp(ctk.CTk):
                 text += f"\nActive chat_id: {self.chat_id}"
             self.tg_status.configure(text=text, text_color="#7fe3b1")
         else:
+            self.telegram_bot_online = False
+            self.telegram_listener_healthy = False
             self.tg_status.configure(
                 text=f"Telegram xətası: {data.get('description', 'unknown error')}",
                 text_color="#ff8a8a",
@@ -731,6 +784,7 @@ class AutoSOCApp(ctk.CTk):
                 switch.select()
                 self.toggle_port(port, switch)
         self.result_box.insert("0.0", "[FIREWALL] All tracked ports allowed\n", "success")
+        self._refresh_dashboard_metrics()
 
     def disable_all_ports(self):
         for port, switch in self.switches.items():
@@ -738,6 +792,7 @@ class AutoSOCApp(ctk.CTk):
                 switch.deselect()
                 self.toggle_port(port, switch)
         self.result_box.insert("0.0", "[FIREWALL] All tracked ports blocked\n", "danger")
+        self._refresh_dashboard_metrics()
 
     def save_telegram_id(self):
         new_id = self.tg_entry.get().strip()
@@ -749,6 +804,11 @@ class AutoSOCApp(ctk.CTk):
             return
 
         self.chat_id = new_id
+        if self.current_user.get("username"):
+            if not update_user_telegram(self.current_user["username"], self.chat_id):
+                self.tg_status.configure(text="This Telegram Chat ID is already linked to another account.", text_color="#ff8a8a")
+                return
+            self.current_user["telegram_chat_id"] = self.chat_id
         self.db.set_setting("telegram_chat_id", self.chat_id)
         self.tg_status.configure(text="Testing Telegram connection...", text_color="#ffd36b")
         self._refresh_dashboard_metrics()
@@ -786,24 +846,34 @@ class AutoSOCApp(ctk.CTk):
         if self.telegram_listener_running or not self.telegram_client.enabled:
             return
         self.telegram_listener_running = True
+        self.telegram_listener_healthy = False
+        self._refresh_dashboard_metrics()
         threading.Thread(target=self._telegram_polling_loop, daemon=True).start()
 
     def restart_telegram_listener(self):
         self.telegram_listener_running = False
+        self.telegram_listener_healthy = False
         self.after(1200, self.start_telegram_listener)
         self.tg_status.configure(text="Telegram listener restarting...", text_color="#ffd36b")
+        self._refresh_dashboard_metrics()
 
     def _telegram_polling_loop(self):
         while self.telegram_client.enabled and self.telegram_listener_running:
             ok, data = self.telegram_client.get_updates(offset=self.telegram_offset, timeout=20)
             if not ok:
+                self.telegram_listener_healthy = False
                 description = data.get("description", "unknown error")
                 self.after(0, lambda d=description: self.tg_status.configure(
                     text=f"Telegram listener error: {d}",
                     text_color="#ff8a8a",
                 ))
+                self.after(0, self._refresh_dashboard_metrics)
                 time.sleep(4)
                 continue
+
+            if not self.telegram_listener_healthy:
+                self.telegram_listener_healthy = True
+                self.after(0, self._refresh_dashboard_metrics)
 
             for update in data.get("result", []):
                 update_id = update.get("update_id")
@@ -817,9 +887,6 @@ class AutoSOCApp(ctk.CTk):
             return
 
         text = (message.get("text") or "").strip()
-        if not text.startswith("/"):
-            return
-
         chat_id = message.get("chat", {}).get("id")
         from_user = message.get("from", {})
         user_id = from_user.get("id")
@@ -835,18 +902,26 @@ class AutoSOCApp(ctk.CTk):
                 raw_payload=raw_payload,
             )
             self.chat_id = str(chat_id)
+            if self.current_user.get("username"):
+                if update_user_telegram(self.current_user["username"], self.chat_id, str(user_id)):
+                    self.current_user["telegram_chat_id"] = self.chat_id
+                    self.current_user["telegram_user_id"] = str(user_id)
             self.db.set_setting("telegram_chat_id", self.chat_id)
             self.after(0, self._sync_telegram_chat_id_ui)
             self.after(0, self._refresh_dashboard_metrics)
 
-        command = text.split()[0].split("@")[0].lower()
+        if not text:
+            return
+
+        normalized = text.lower()
+        command = normalized.split()[0].split("@")[0]
         if command in ("/start", "/id"):
             response = (
                 "AutoSOC AI is connected.\n"
                 f"Telegram User ID: {user_id}\n"
                 f"Telegram Chat ID: {chat_id}\n\n"
-                "Notifications use the Chat ID.\n"
-                "You can now return to the app and press Save & Test."
+                "Use the Telegram Chat ID during registration in the app.\n"
+                "After login, scan alerts and port information will be sent to this chat."
             )
             self.telegram_client.send_message(chat_id, response, parse_mode=None)
         elif command == "/help":
@@ -857,6 +932,17 @@ class AutoSOCApp(ctk.CTk):
                 "/help - show this help"
             )
             self.telegram_client.send_message(chat_id, help_text, parse_mode=None)
+        elif normalized in ("start", "id", "hello", "hi"):
+            self.telegram_client.send_message(
+                chat_id,
+                (
+                    "Chat linked successfully.\n"
+                    f"Telegram Chat ID: {chat_id}\n"
+                    "Use this Chat ID during registration in the app.\n"
+                    "You can use /start, /id or /help at any time."
+                ),
+                parse_mode=None,
+            )
 
     def _sync_telegram_chat_id_ui(self):
         self.tg_entry.delete(0, "end")
@@ -888,6 +974,7 @@ class AutoSOCApp(ctk.CTk):
             f"[FIREWALL] Port {port} ({service}) {state_text}\n",
             "success" if is_open else "danger",
         )
+        self._refresh_dashboard_metrics()
 
     def update_threshold(self, value):
         self.guard.threshold = int(value)
@@ -1026,9 +1113,13 @@ class AutoSOCApp(ctk.CTk):
         if not target:
             messagebox.showwarning("Target Required", "Please enter an IP address or hostname.")
             return
+        self.last_scan_data = []
         self.btn_scan.configure(state="disabled", text="Scanning...")
         self.status_label.configure(text="SCAN IN PROGRESS", text_color="#ffd36b")
         self.result_box.delete("0.0", "end")
+        self.assistant_summary.delete("0.0", "end")
+        self.assistant_summary.insert("end", "Scan in progress. Metrics will refresh as devices are processed.")
+        self._refresh_dashboard_metrics()
         threading.Thread(target=self.run_logic, args=(target,), daemon=True).start()
 
     def ask_ai_assistant(self, preset_question=None):
@@ -1156,63 +1247,99 @@ class AutoSOCApp(ctk.CTk):
             scanner = NetworkScanner()
             analyzer = RiskAnalyzer()
             data = scanner.scan_network(target, ports=list(self.port_definitions.keys()))
-            self.last_scan_data = data
+            processed_devices = []
 
-            self.result_box.insert("end", f">>> SCANNING TARGET: {target}\n", "ai")
+            self._append_result(f">>> SCANNING TARGET: {target}\n", "ai")
+            self._append_result(
+                f">>> Requested scan of {len(self.port_definitions)} tracked TCP ports\n",
+                "muted",
+            )
             total_risks = 0
 
             for device in data:
+                processed_devices.append(device)
+                self.last_scan_data = list(processed_devices)
+                self._ui(self._refresh_dashboard_metrics)
+
                 vendor = list(device.get("vendor", {}).values())[0] if device.get("vendor") else "Unknown device"
                 ip = device.get("ip", "unknown")
-                self.result_box.insert("end", f"\n[DEVICE] {vendor} ({ip})\n", "info")
+                self._append_result(f"\n[DEVICE] {vendor} ({ip})\n", "info")
 
                 open_ports = device.get("ports", [])
+                port_summary = device.get("port_scan_summary", {})
+                self._append_result(
+                    (
+                        "    Port scan summary: "
+                        f"checked {port_summary.get('requested', len(self.port_definitions))}, "
+                        f"open {port_summary.get('open', 0)}, "
+                        f"closed {port_summary.get('closed', 0)}, "
+                        f"filtered {port_summary.get('filtered', 0)}\n"
+                    ),
+                    "muted",
+                )
                 if open_ports:
                     ports_view = ", ".join(
                         f"{item['port']} ({self.port_definitions.get(int(item['port']), item.get('name', 'Unknown'))})"
                         for item in open_ports
                     )
-                    self.result_box.insert("end", f"    Open Ports: {ports_view}\n", "info")
+                    self._append_result(f"    Open Ports: {ports_view}\n", "info")
                 else:
-                    self.result_box.insert("end", "    No open tracked services detected\n", "success")
+                    self._append_result("    No open tracked services detected\n", "success")
 
                 risks = analyzer.analyze(open_ports)
                 for risk in risks:
                     port = risk["port"]
                     service = risk["info"]["service"]
                     if port in self.switches and not self.switches[port].get():
-                        self.result_box.insert("end", f"    Port {port}: already isolated by firewall\n", "ai")
+                        self._append_result(f"    Port {port}: already isolated by firewall\n", "ai")
                         continue
 
                     total_risks += 1
-                    self.result_box.insert("end", f"    Risk: Port {port} ({service})\n", "danger")
+                    self._append_result(f"    Risk: Port {port} ({service})\n", "danger")
                     instruction = self.ai_expert.generate_instruction(vendor, port, service, "az")
-                    self.result_box.insert("end", f"    AI: {instruction}\n", "ai")
+                    self._append_result(f"    AI: {instruction}\n", "ai")
+                    self._ui(self._refresh_dashboard_metrics)
 
             risk_score = min(total_risks * 25, 100)
             self.scan_summary = self.ai_expert.summarize_scan(data, "az")
-            self.assistant_summary.delete("0.0", "end")
-            self.assistant_summary.insert("end", self.scan_summary)
-            self._refresh_dashboard_metrics()
+            self.last_scan_data = data
+            self._set_scan_summary_text(self.scan_summary)
+            self._ui(self._refresh_dashboard_metrics)
+            telegram_devices = []
+            for device in data:
+                ip = device.get("ip", "unknown")
+                device_ports = device.get("ports", [])
+                port_text = ", ".join(str(item["port"]) for item in device_ports) if device_ports else "none"
+                telegram_devices.append(f"{ip}: {port_text}")
+            telegram_ports_text = "\n".join(telegram_devices[:8]) if telegram_devices else "No devices found"
 
             if total_risks > 0:
                 alert_tg = (
                     f"🔍 *AutoSOC AI Scan Result*\n\n"
                     f"Target: `{target}`\n"
                     f"Detected threats: *{total_risks}*\n"
-                    f"Risk score: *{risk_score}%*"
+                    f"Risk score: *{risk_score}%*\n\n"
+                    f"*Open ports by device:*\n{telegram_ports_text}"
                 )
                 threading.Thread(target=self.send_telegram_alert, args=(alert_tg,), daemon=True).start()
             else:
-                self.result_box.insert("end", "\nNo critical issues detected.\n", "success")
+                self._append_result("\nNo critical issues detected.\n", "success")
+                alert_tg = (
+                    f"✅ *AutoSOC AI Scan Result*\n\n"
+                    f"Target: `{target}`\n"
+                    f"Detected threats: *0*\n"
+                    f"Risk score: *0%*\n\n"
+                    f"*Open ports by device:*\n{telegram_ports_text}"
+                )
+                threading.Thread(target=self.send_telegram_alert, args=(alert_tg,), daemon=True).start()
 
             self.db.add_scan(target, risk_score, f"{total_risks} problem(s)")
         except Exception as exc:
-            self.result_box.insert("end", f"\n[ERROR] {exc}\n", "danger")
+            self._append_result(f"\n[ERROR] {exc}\n", "danger")
         finally:
-            self.btn_scan.configure(state="normal", text="Network Scan")
-            self.status_label.configure(text="SYSTEM READY", text_color="#6bf0a7")
-            self._refresh_dashboard_metrics()
+            self._ui(lambda: self.btn_scan.configure(state="normal", text="Network Scan"))
+            self._set_status("SYSTEM READY", "#6bf0a7")
+            self._ui(self._refresh_dashboard_metrics)
 
     def show_history(self):
         win = ctk.CTkToplevel(self)
@@ -1244,7 +1371,7 @@ if __name__ == "__main__":
     import login
 
     def on_login_success(user):
-        app = AutoSOCApp()
+        app = AutoSOCApp(current_user=user)
         app.title(f"AutoSOC AI: Cyber Shield v3.0  |  {user['username']} ({user['role']})")
         app.mainloop()
 

@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:/Users/user/PycharmProjects/AutoSOC/.venv/Lib/site-packages/customtkinter', 'customtkinter/'), ('scanner.py', '.'), ('analyzer.py', '.'), ('database.py', '.'), ('guard.py', '.'), ('ai_expert.py', '.')],
+    datas=[('C:/Users/user/PycharmProjects/AutoSOC/.venv/Lib/site-packages/customtkinter', 'customtkinter/'), ('scanner.py', '.'), ('analyzer.py', '.'), ('database.py', '.'), ('guard.py', '.'), ('ai_expert.py', '.'), ('auth.py', '.'), ('login.py', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
