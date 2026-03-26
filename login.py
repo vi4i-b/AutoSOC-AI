@@ -41,19 +41,59 @@ def _resource_path(*parts):
     return os.path.join(base_path, *parts)
 
 
-def load_env_file(path=".env"):
-    if not os.path.exists(path):
-        return
+def _apply_window_icon(window):
+    png_path = _resource_path("assets", "app_icon.png")
+    ico_path = _resource_path("assets", "app_icon.ico")
     try:
-        with open(path, "r", encoding="utf-8") as env_file:
-            for raw_line in env_file:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-    except OSError:
+        if os.path.exists(png_path):
+            window._app_icon_image = tk.PhotoImage(file=png_path)
+            window.iconphoto(True, window._app_icon_image)
+        if os.name == "nt" and os.path.exists(ico_path):
+            window.iconbitmap(ico_path)
+    except tk.TclError:
         pass
+
+
+def load_env_file(path=".env"):
+    candidates = []
+    if path:
+        candidates.append(path)
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates.extend(
+        [
+            os.path.join(os.getcwd(), ".env"),
+            os.path.join(base_dir, ".env"),
+            os.path.join(os.path.dirname(base_dir), ".env"),
+        ]
+    )
+
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.extend(
+            [
+                os.path.join(exe_dir, ".env"),
+                os.path.join(os.path.dirname(exe_dir), ".env"),
+            ]
+        )
+
+    seen = set()
+    for candidate in candidates:
+        normalized = os.path.abspath(candidate)
+        if normalized in seen or not os.path.exists(normalized):
+            continue
+        seen.add(normalized)
+        try:
+            with open(normalized, "r", encoding="utf-8") as env_file:
+                for raw_line in env_file:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            return
+        except OSError:
+            continue
 
 
 class TelegramBotClient:
@@ -191,6 +231,7 @@ class SplashScreen(ctk.CTkToplevel):
         self._fade_after_id = None
         self._closed = False
         self.overrideredirect(True)
+        _apply_window_icon(self)
 
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
@@ -284,6 +325,7 @@ class LoginWindow(ctk.CTk):
         self.telegram_client = TelegramBotClient(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
         self.telegram_offset = None
         self.telegram_listener_running = False
+        _apply_window_icon(self)
 
         self.title("AutoSOC AI — Giriş")
         self.resizable(False, False)

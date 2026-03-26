@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('database.py', '.'), ('scanner.py', '.'), ('analyzer.py', '.'), ('guard.py', '.'), ('ai_expert.py', '.')],
+    datas=[('database.py', '.'), ('scanner.py', '.'), ('analyzer.py', '.'), ('guard.py', '.'), ('ai_expert.py', '.'), ('assets/autosoc_logo.png', 'assets'), ('assets/autosoc_logo_splash.png', 'assets'), ('assets/autosoc_logo_login.png', 'assets'), ('assets/app_icon.png', 'assets'), ('assets/app_icon.ico', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/app_icon.ico',
 )
