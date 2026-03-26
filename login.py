@@ -244,22 +244,13 @@ class SplashScreen(ctk.CTkToplevel):
         title_font = max(42, int(54 * splash_scale))
         subtitle_font = max(18, int(20 * splash_scale))
 
-        logo_path = _resource_path("assets", "autosoc_logo.png")
+        logo_path = _resource_path("assets", "autosoc_logo_splash.png")
         if os.path.exists(logo_path):
             try:
                 logo_image = tk.PhotoImage(file=logo_path)
-                max_logo_w = max(180, int(W * 0.40))
-                max_logo_h = max(150, int(H * 0.24))
-                shrink = max(
-                    1,
-                    math.ceil(logo_image.width() / max_logo_w),
-                    math.ceil(logo_image.height() / max_logo_h),
-                )
-                if shrink > 1:
-                    logo_image = logo_image.subsample(shrink, shrink)
                 self.logo_image = logo_image
                 tk.Label(cf, image=self.logo_image, text="",
-                         bg=splash_bg, bd=0, highlightthickness=0).pack(pady=(0, 10))
+                         bg=splash_bg, bd=0, highlightthickness=0).pack(pady=(0, 6))
             except tk.TclError:
                 ctk.CTkLabel(cf, text="🛡️", font=("Arial", 56),
                              fg_color="transparent").pack(pady=(0, 10))
@@ -414,22 +405,13 @@ class LoginWindow(ctk.CTk):
         card.pack_propagate(False)
 
         # ── Logo + title ───────────────────────────────────────────────
-        logo_path = _resource_path("assets", "autosoc_logo.png")
+        logo_path = _resource_path("assets", "autosoc_logo_login.png")
         if os.path.exists(logo_path):
             try:
                 login_logo = tk.PhotoImage(file=logo_path)
-                max_logo_w = max(120, int(card_width * 0.34))
-                max_logo_h = 110
-                shrink = max(
-                    1,
-                    math.ceil(login_logo.width() / max_logo_w),
-                    math.ceil(login_logo.height() / max_logo_h),
-                )
-                if shrink > 1:
-                    login_logo = login_logo.subsample(shrink, shrink)
                 self.login_logo_image = login_logo
                 tk.Label(card, image=self.login_logo_image, text="",
-                         bg=BG_CARD, bd=0, highlightthickness=0).pack(pady=(30, 4))
+                         bg=BG_CARD, bd=0, highlightthickness=0).pack(pady=(22, 2))
             except tk.TclError:
                 ctk.CTkLabel(card, text="🛡️",
                              font=("Arial", 44),
