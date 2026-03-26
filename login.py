@@ -36,6 +36,11 @@ GLOW_COLOR    = "#0d2d6e"
 TELEGRAM_BOT_URL = os.getenv("TELEGRAM_BOT_URL", "https://t.me/AutoSOC_Baku_Bot").strip()
 
 
+def _resource_path(*parts):
+    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, *parts)
+
+
 def load_env_file(path=".env"):
     if not os.path.exists(path):
         return
@@ -218,6 +223,7 @@ class SplashScreen(ctk.CTkToplevel):
     def __init__(self, parent, on_done):
         super().__init__(parent)
         self.on_done = on_done
+        self.logo_image = None
         self.overrideredirect(True)
 
         sw = self.winfo_screenwidth()
@@ -235,12 +241,31 @@ class SplashScreen(ctk.CTkToplevel):
 
         cf = ctk.CTkFrame(self, fg_color="transparent")
         cf.place(relx=.5, rely=.57, anchor="center")
-        shield_font = max(70, int(86 * splash_scale))
         title_font = max(42, int(54 * splash_scale))
         subtitle_font = max(18, int(20 * splash_scale))
 
-        ctk.CTkLabel(cf, text="🛡️", font=("Arial", 56),
-                     fg_color="transparent").pack(pady=(0, 10))
+        logo_path = _resource_path("assets", "autosoc_logo.png")
+        if os.path.exists(logo_path):
+            try:
+                logo_image = tk.PhotoImage(file=logo_path)
+                max_logo_w = max(180, int(W * 0.40))
+                max_logo_h = max(150, int(H * 0.24))
+                shrink = max(
+                    1,
+                    math.ceil(logo_image.width() / max_logo_w),
+                    math.ceil(logo_image.height() / max_logo_h),
+                )
+                if shrink > 1:
+                    logo_image = logo_image.subsample(shrink, shrink)
+                self.logo_image = logo_image
+                tk.Label(cf, image=self.logo_image, text="",
+                         bg=splash_bg, bd=0, highlightthickness=0).pack(pady=(0, 10))
+            except tk.TclError:
+                ctk.CTkLabel(cf, text="🛡️", font=("Arial", 56),
+                             fg_color="transparent").pack(pady=(0, 10))
+        else:
+            ctk.CTkLabel(cf, text="🛡️", font=("Arial", 56),
+                         fg_color="transparent").pack(pady=(0, 10))
 
         row = ctk.CTkFrame(cf, fg_color="transparent")
         row.pack(pady=(0, max(12, int(14 * splash_scale))))
@@ -274,6 +299,7 @@ class LoginWindow(ctk.CTk):
     def __init__(self, on_success):
         super().__init__()
         self.on_success = on_success
+        self.login_logo_image = None
         load_env_file()
         init_db()
         self.telegram_client = TelegramBotClient(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
@@ -388,9 +414,30 @@ class LoginWindow(ctk.CTk):
         card.pack_propagate(False)
 
         # ── Logo + title ───────────────────────────────────────────────
-        ctk.CTkLabel(card, text="🛡️",
-                     font=("Arial", 44),
-                     fg_color="transparent").pack(pady=(30, 4))
+        logo_path = _resource_path("assets", "autosoc_logo.png")
+        if os.path.exists(logo_path):
+            try:
+                login_logo = tk.PhotoImage(file=logo_path)
+                max_logo_w = max(120, int(card_width * 0.34))
+                max_logo_h = 110
+                shrink = max(
+                    1,
+                    math.ceil(login_logo.width() / max_logo_w),
+                    math.ceil(login_logo.height() / max_logo_h),
+                )
+                if shrink > 1:
+                    login_logo = login_logo.subsample(shrink, shrink)
+                self.login_logo_image = login_logo
+                tk.Label(card, image=self.login_logo_image, text="",
+                         bg=BG_CARD, bd=0, highlightthickness=0).pack(pady=(30, 4))
+            except tk.TclError:
+                ctk.CTkLabel(card, text="🛡️",
+                             font=("Arial", 44),
+                             fg_color="transparent").pack(pady=(30, 4))
+        else:
+            ctk.CTkLabel(card, text="🛡️",
+                         font=("Arial", 44),
+                         fg_color="transparent").pack(pady=(30, 4))
 
         title_row = ctk.CTkFrame(card, fg_color="transparent")
         title_row.pack()
