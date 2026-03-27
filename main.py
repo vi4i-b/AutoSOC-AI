@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import queue
 import socket
 import sys
 import threading
@@ -15,6 +16,7 @@ from tkinter import messagebox
 from ai_expert import AISecurityExpert
 from analyzer import RiskAnalyzer
 from auth import get_user_telegram, update_user_telegram
+from canary import PortCanary
 from database import SOCDatabase
 from guard import NetworkGuard
 from scanner import NetworkScanner
@@ -162,7 +164,9 @@ class AutoSOCApp(ctk.CTk):
         self.bot_identity = None
 
         self.ai_expert = AISecurityExpert()
+        self.analyzer = RiskAnalyzer()
         self.guard = NetworkGuard(self.on_threat_detected)
+        self.port_canary = PortCanary(self.on_canary_trip)
         self.last_scan_data = []
         self.scan_summary = ""
         self.ai_chat_window = None
@@ -170,8 +174,12 @@ class AutoSOCApp(ctk.CTk):
         self.ai_loader_step = 0
         self.ai_fab_animation_tick = 0
         self.chat_history = []
+        self.incident_count = 0
+        self.previous_scan_snapshot = None
+        self.latest_new_exposures = []
+        self.ui_queue = queue.Queue()
 
-        self.title("AutoSOC AI: Cyber Shield v3.0")
+        self.title("AutoSOC: Cyber Shield v3.0")
         self.geometry("1440x960")
         self.minsize(1280, 840)
         self.configure(fg_color="#07111b")
@@ -211,13 +219,38 @@ class AutoSOCApp(ctk.CTk):
         self._build_fab()
         self._render_intro_message()
         self._refresh_dashboard_metrics()
+        self._refresh_prevention_status()
         self._check_telegram_status()
+        self.after(120, self._drain_ui_queue)
 
         if self.telegram_client.enabled:
             self.start_telegram_listener()
 
     def _ui(self, callback):
-        self.after(0, callback)
+        if threading.current_thread() is threading.main_thread():
+            try:
+                callback()
+            except tk.TclError:
+                pass
+            return
+        self.ui_queue.put(callback)
+
+    def _drain_ui_queue(self):
+        try:
+            while True:
+                callback = self.ui_queue.get_nowait()
+                try:
+                    callback()
+                except tk.TclError:
+                    pass
+        except queue.Empty:
+            pass
+
+        try:
+            if self.winfo_exists():
+                self.after(120, self._drain_ui_queue)
+        except tk.TclError:
+            pass
 
     def _append_result(self, text, tag=None, index="end"):
         def update():
@@ -240,15 +273,23 @@ class AutoSOCApp(ctk.CTk):
         self._ui(lambda: self.status_label.configure(text=text, text_color=color))
 
     def _build_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=330, fg_color="#0b1623", corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=390, fg_color="#0b1623", corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_propagate(False)
+        self.sidebar_scroll = ctk.CTkScrollableFrame(
+            self.sidebar,
+            fg_color="transparent",
+            corner_radius=0,
+            scrollbar_button_color="#23384d",
+            scrollbar_button_hover_color="#2b7fff",
+        )
+        self.sidebar_scroll.pack(fill="both", expand=True)
 
-        brand = ctk.CTkFrame(self.sidebar, fg_color="#0f2033", corner_radius=20)
+        brand = ctk.CTkFrame(self.sidebar_scroll, fg_color="#0f2033", corner_radius=20)
         brand.pack(fill="x", padx=22, pady=(22, 16))
         ctk.CTkLabel(
             brand,
-            text="AutoSOC AI",
+            text="AutoSOC",
             font=ctk.CTkFont(size=28, weight="bold"),
             text_color="#f2f7fb",
         ).pack(anchor="w", padx=18, pady=(18, 2))
@@ -257,11 +298,11 @@ class AutoSOCApp(ctk.CTk):
             text="SOC cockpit for network visibility, response, and Telegram alerting",
             font=ctk.CTkFont(size=12),
             text_color="#8ea8bf",
-            wraplength=250,
+            wraplength=310,
             justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 18))
 
-        control_card = ctk.CTkFrame(self.sidebar, fg_color="#101c2b", corner_radius=18)
+        control_card = ctk.CTkFrame(self.sidebar_scroll, fg_color="#101c2b", corner_radius=18)
         control_card.pack(fill="x", padx=22, pady=(0, 16))
 
         self.btn_scan = ctk.CTkButton(
@@ -278,7 +319,7 @@ class AutoSOCApp(ctk.CTk):
 
         self.btn_guard = ctk.CTkButton(
             control_card,
-            text="AI Guard: Off",
+            text="Guard: Off",
             height=46,
             corner_radius=14,
             fg_color="#243244",
@@ -301,7 +342,7 @@ class AutoSOCApp(ctk.CTk):
         )
         self.btn_history.pack(fill="x", padx=16, pady=(0, 16))
 
-        sensitivity_card = ctk.CTkFrame(self.sidebar, fg_color="#101c2b", corner_radius=18)
+        sensitivity_card = ctk.CTkFrame(self.sidebar_scroll, fg_color="#101c2b", corner_radius=18)
         sensitivity_card.pack(fill="x", padx=22, pady=(0, 16))
 
         self.slider_label = ctk.CTkLabel(
@@ -329,12 +370,88 @@ class AutoSOCApp(ctk.CTk):
             text="Lower values react faster. Higher values reduce false positives.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=250,
+            wraplength=310,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
 
-        ports_card = ctk.CTkFrame(self.sidebar, fg_color="#101c2b", corner_radius=18)
-        ports_card.pack(fill="both", expand=True, padx=22, pady=(0, 16))
+        prevention_card = ctk.CTkFrame(self.sidebar_scroll, fg_color="#101c2b", corner_radius=18)
+        prevention_card.pack(fill="x", padx=22, pady=(0, 16))
+
+        ctk.CTkLabel(
+            prevention_card,
+            text="Prevention Toolkit",
+            text_color="#e8f1f8",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(anchor="w", padx=16, pady=(16, 8))
+
+        prevention_row = ctk.CTkFrame(prevention_card, fg_color="transparent")
+        prevention_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        self.btn_harden = ctk.CTkButton(
+            prevention_row,
+            text="Harden Risky",
+            width=150,
+            height=34,
+            corner_radius=12,
+            fg_color="#88344d",
+            hover_color="#6d263c",
+            command=self.harden_risky_ports,
+        )
+        self.btn_harden.pack(side="left", padx=(0, 6))
+
+        self.btn_canary = ctk.CTkButton(
+            prevention_row,
+            text="Port Canary: Off",
+            width=165,
+            height=34,
+            corner_radius=12,
+            fg_color="#243244",
+            hover_color="#31445b",
+            command=self.toggle_port_canary,
+        )
+        self.btn_canary.pack(side="left")
+
+        prevention_row_two = ctk.CTkFrame(prevention_card, fg_color="transparent")
+        prevention_row_two.pack(fill="x", padx=16, pady=(0, 8))
+
+        ctk.CTkButton(
+            prevention_row_two,
+            text="Self-Test",
+            width=150,
+            height=32,
+            corner_radius=12,
+            fg_color="transparent",
+            hover_color="#172433",
+            border_width=1,
+            border_color="#2b425a",
+            command=self.run_port_canary_self_test,
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            prevention_row_two,
+            text="Event Feed",
+            width=165,
+            height=32,
+            corner_radius=12,
+            fg_color="transparent",
+            hover_color="#172433",
+            border_width=1,
+            border_color="#2b425a",
+            command=self.show_event_feed,
+        ).pack(side="left")
+
+        self.prevention_status = ctk.CTkLabel(
+            prevention_card,
+            text="Canary idle. Risky-port hardening is ready.",
+            text_color="#7f95ab",
+            font=ctk.CTkFont(size=11),
+            wraplength=310,
+            justify="left",
+        )
+        self.prevention_status.pack(anchor="w", padx=16, pady=(0, 16))
+
+        ports_card = ctk.CTkFrame(self.sidebar_scroll, fg_color="#101c2b", corner_radius=18)
+        ports_card.pack(fill="x", padx=22, pady=(0, 16))
 
         ctk.CTkLabel(
             ports_card,
@@ -349,7 +466,7 @@ class AutoSOCApp(ctk.CTk):
         ctk.CTkButton(
             actions_row,
             text="Allow All",
-            width=120,
+            width=150,
             height=34,
             corner_radius=12,
             fg_color="#1f805d",
@@ -360,7 +477,7 @@ class AutoSOCApp(ctk.CTk):
         ctk.CTkButton(
             actions_row,
             text="Block All",
-            width=120,
+            width=150,
             height=34,
             corner_radius=12,
             fg_color="#88344d",
@@ -368,17 +485,39 @@ class AutoSOCApp(ctk.CTk):
             command=self.disable_all_ports,
         ).pack(side="left")
 
-        self.ports_frame = ctk.CTkScrollableFrame(
-            ports_card,
-            fg_color="#0c1623",
-            corner_radius=14,
-            height=300,
+        ports_scroll_shell = ctk.CTkFrame(ports_card, fg_color="#0c1623", corner_radius=14)
+        ports_scroll_shell.pack(fill="both", expand=True, padx=16, pady=(0, 10))
+
+        self.ports_canvas = tk.Canvas(
+            ports_scroll_shell,
+            bg="#0c1623",
+            bd=0,
+            highlightthickness=0,
+            xscrollincrement=18,
+            yscrollincrement=18,
         )
-        self.ports_frame.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.ports_canvas.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
+
+        ports_y_scroll = ctk.CTkScrollbar(
+            ports_scroll_shell,
+            orientation="vertical",
+            command=self.ports_canvas.yview,
+        )
+        ports_y_scroll.pack(side="right", fill="y", padx=(6, 8), pady=8)
+        self.ports_canvas.configure(yscrollcommand=ports_y_scroll.set)
+
+        self.ports_frame = ctk.CTkFrame(self.ports_canvas, fg_color="#0c1623", corner_radius=0)
+        self.ports_canvas_window = self.ports_canvas.create_window((0, 0), window=self.ports_frame, anchor="nw")
+
+        def sync_port_scrollregion(_event=None):
+            self.ports_canvas.configure(scrollregion=self.ports_canvas.bbox("all"))
+
+        self.ports_frame.bind("<Configure>", sync_port_scrollregion)
 
         for port, service in sorted(self.port_definitions.items()):
             switch = ctk.CTkSwitch(
                 self.ports_frame,
+                width=470,
                 text=f"Port {port}  •  {service}",
                 progress_color="#2b7fff",
                 button_color="#d2e3ff",
@@ -389,7 +528,17 @@ class AutoSOCApp(ctk.CTk):
             switch.select()
             self.switches[port] = switch
 
-        telegram_card = ctk.CTkFrame(self.sidebar, fg_color="#101c2b", corner_radius=18)
+        self.ports_canvas.configure(scrollregion=self.ports_canvas.bbox("all"))
+
+        ports_x_scroll = ctk.CTkScrollbar(
+            ports_card,
+            orientation="horizontal",
+            command=self.ports_canvas.xview,
+        )
+        ports_x_scroll.pack(fill="x", padx=16, pady=(0, 16))
+        self.ports_canvas.configure(xscrollcommand=ports_x_scroll.set)
+
+        telegram_card = ctk.CTkFrame(self.sidebar_scroll, fg_color="#101c2b", corner_radius=18)
         telegram_card.pack(fill="x", padx=22, pady=(0, 22))
 
         ctk.CTkLabel(
@@ -417,7 +566,7 @@ class AutoSOCApp(ctk.CTk):
             text_color="#87a5c0",
             font=ctk.CTkFont(size=11),
             justify="left",
-            wraplength=250,
+            wraplength=310,
         )
         self.tg_status.pack(anchor="w", padx=16, pady=(0, 10))
 
@@ -427,7 +576,7 @@ class AutoSOCApp(ctk.CTk):
         self.btn_save_tg = ctk.CTkButton(
             btn_row,
             text="Save & Test",
-            width=115,
+            width=145,
             height=36,
             corner_radius=12,
             fg_color="#2b7fff",
@@ -439,7 +588,7 @@ class AutoSOCApp(ctk.CTk):
         ctk.CTkButton(
             btn_row,
             text="Open Bot",
-            width=115,
+            width=145,
             height=36,
             corner_radius=12,
             fg_color="transparent",
@@ -465,7 +614,7 @@ class AutoSOCApp(ctk.CTk):
             text="Write /start to the bot. The app will capture the Chat ID and use it for notifications.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=250,
+            wraplength=310,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
 
@@ -527,13 +676,14 @@ class AutoSOCApp(ctk.CTk):
 
         metrics = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         metrics.grid(row=1, column=0, sticky="ew", padx=26, pady=(0, 14))
-        for idx in range(4):
+        for idx in range(5):
             metrics.grid_columnconfigure(idx, weight=1)
 
         self.metric_total_devices = self._metric_card(metrics, 0, "Devices", "0", "#4cc9f0")
         self.metric_open_ports = self._metric_card(metrics, 1, "Open Ports", "0", "#5dd39e")
         self.metric_risk = self._metric_card(metrics, 2, "Risk Score", "0%", "#ff9f6e")
-        self.metric_tg = self._metric_card(metrics, 3, "Telegram", "Offline", "#ff6b7a")
+        self.metric_incidents = self._metric_card(metrics, 3, "Incidents", "0", "#ffd36b")
+        self.metric_tg = self._metric_card(metrics, 4, "Telegram", "Offline", "#ff6b7a")
 
         content = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         content.grid(row=2, column=0, sticky="nsew", padx=26, pady=(0, 26))
@@ -591,7 +741,7 @@ class AutoSOCApp(ctk.CTk):
 
         ctk.CTkLabel(
             summary_card,
-            text="AI Situation Brief",
+            text="Situation Brief",
             text_color="#f4f8fc",
             font=ctk.CTkFont(size=16, weight="bold"),
         ).pack(anchor="w", padx=16, pady=(14, 8))
@@ -631,7 +781,7 @@ class AutoSOCApp(ctk.CTk):
 
         ctk.CTkLabel(
             header,
-            text="AI Copilot",
+            text="Security Copilot",
             text_color="#f4f8fc",
             font=ctk.CTkFont(size=16, weight="bold"),
         ).grid(row=0, column=0, sticky="w")
@@ -686,7 +836,7 @@ class AutoSOCApp(ctk.CTk):
     def _build_fab(self):
         self.ai_fab = ctk.CTkButton(
             self,
-            text="AI\nChat",
+            text="Chat",
             width=82,
             height=82,
             corner_radius=41,
@@ -703,7 +853,7 @@ class AutoSOCApp(ctk.CTk):
 
     def _metric_card(self, parent, column, label, value, accent):
         card = ctk.CTkFrame(parent, fg_color="#0b1623", corner_radius=20)
-        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0 if column == 3 else 8))
+        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0 if column == 4 else 8))
         ctk.CTkLabel(
             card,
             text=label,
@@ -739,7 +889,7 @@ class AutoSOCApp(ctk.CTk):
 
     def _render_intro_message(self):
         intro = (
-            "AutoSOC AI hazırdır.\n\n"
+            "AutoSOC hazırdır.\n\n"
             "Mən Azərbaycan dilini dəstəkləyirəm və son scan kontekstini yadda saxlayıram.\n"
             "Qısa follow-up sualları da başa düşürəm: məsələn, 'bunu bağla', 'niyə təhlükəlidir?', 'nə edək?'."
         )
@@ -754,19 +904,26 @@ class AutoSOCApp(ctk.CTk):
         self.chat_history = self.chat_history[-14:]
         self.assistant_output.delete("0.0", "end")
         for sender_name, content in self.chat_history:
-            prefix = "You" if sender_name == "You" else "AutoSOC AI"
+            prefix = "You" if sender_name == "You" else "AutoSOC"
             self.assistant_output.insert("end", f"{prefix}\n{content}\n\n")
         self.assistant_output.see("end")
 
     def _refresh_dashboard_metrics(self):
         total_devices = len(self.last_scan_data)
         open_ports = self._count_live_open_ports()
-        risk_count = self._count_live_detected_risks()
-        risk_score = min(risk_count * 25, 100)
+        findings = self._collect_risks(self.last_scan_data)
+        active_findings = []
+        for finding in findings:
+            switch = self.switches.get(finding["port"])
+            if switch and not switch.get():
+                continue
+            active_findings.append(finding)
+        risk_score = self.analyzer.calculate_risk_score(active_findings)
 
         self.metric_total_devices.configure(text=str(total_devices))
         self.metric_open_ports.configure(text=str(open_ports))
         self.metric_risk.configure(text=f"{risk_score}%")
+        self.metric_incidents.configure(text=str(self.incident_count))
 
         if self.telegram_bot_online and self.chat_id and self.telegram_listener_healthy:
             self.metric_tg.configure(text="Ready", text_color="#6de0a8")
@@ -825,11 +982,54 @@ class AutoSOCApp(ctk.CTk):
         self._refresh_dashboard_metrics()
 
     def _collect_risks(self, data):
-        analyzer = RiskAnalyzer()
         risks = []
         for device in data or []:
-            risks.extend(analyzer.analyze(device.get("ports", [])))
+            risks.extend(self.analyzer.analyze(device.get("ports", [])))
         return risks
+
+    def _extract_open_port_snapshot(self, data):
+        snapshot = set()
+        for device in data or []:
+            ip = device.get("ip", "unknown")
+            for port_info in device.get("ports", []):
+                snapshot.add((ip, int(port_info["port"])))
+        return snapshot
+
+    def _update_exposure_baseline(self, data):
+        current_snapshot = self._extract_open_port_snapshot(data)
+        if self.previous_scan_snapshot is None:
+            self.previous_scan_snapshot = current_snapshot
+            self.latest_new_exposures = []
+            return []
+
+        new_entries = current_snapshot - self.previous_scan_snapshot
+        self.previous_scan_snapshot = current_snapshot
+        self.latest_new_exposures = [
+            {"ip": ip, "port": port, "service": self.port_definitions.get(port, "Unknown")}
+            for ip, port in sorted(new_entries)
+        ]
+        return self.latest_new_exposures
+
+    def _refresh_prevention_status(self):
+        canary_state = self.port_canary.status()
+        if canary_state["running"] and canary_state["bound_ports"]:
+            canary_text = "Port Canary active on " + ", ".join(str(port) for port in canary_state["bound_ports"])
+            self.btn_canary.configure(text="Port Canary: On", fg_color="#1f805d", hover_color="#166446")
+        else:
+            canary_text = "Canary idle. Risky-port hardening is ready."
+            self.btn_canary.configure(text="Port Canary: Off", fg_color="#243244", hover_color="#31445b")
+
+        extras = []
+        if self.latest_new_exposures:
+            extras.append(f"New exposure drift: {len(self.latest_new_exposures)} newly opened service(s).")
+        if self.incident_count:
+            extras.append(f"Incidents captured: {self.incident_count}.")
+        failed_ports = canary_state.get("failed_ports", {})
+        if failed_ports:
+            extras.append("Unavailable canary ports: " + ", ".join(str(port) for port in failed_ports))
+
+        status_text = canary_text if not extras else canary_text + "\n" + "\n".join(extras)
+        self.prevention_status.configure(text=status_text)
 
     def enable_all_ports(self):
         for port, switch in self.switches.items():
@@ -870,16 +1070,16 @@ class AutoSOCApp(ctk.CTk):
     def _send_test_message(self):
         ok, data = self.telegram_client.send_message(
             self.chat_id,
-            "✅ *AutoSOC AI connected*\nTelegram notifications are now linked to this chat.",
+            "✅ *AutoSOC connected*\nTelegram notifications are now linked to this chat.",
         )
         if ok:
-            self.after(0, lambda: self.tg_status.configure(
+            self._ui(lambda: self.tg_status.configure(
                 text=f"Chat ID verified successfully.\nActive chat_id: {self.chat_id}",
                 text_color="#7fe3b1",
             ))
-            self.after(0, self._refresh_dashboard_metrics)
+            self._ui(self._refresh_dashboard_metrics)
         else:
-            self.after(0, lambda: self.tg_status.configure(
+            self._ui(lambda: self.tg_status.configure(
                 text=f"Telegram send failed: {data.get('description', 'unknown error')}",
                 text_color="#ff8a8a",
             ))
@@ -889,7 +1089,7 @@ class AutoSOCApp(ctk.CTk):
             return
         ok, data = self.telegram_client.send_message(self.chat_id, message_text)
         if not ok:
-            self.after(0, lambda: self.result_box.insert(
+            self._ui(lambda: self.result_box.insert(
                 "0.0",
                 f"[TELEGRAM ERROR] {data.get('description', 'unknown error')}\n",
                 "danger",
@@ -916,17 +1116,17 @@ class AutoSOCApp(ctk.CTk):
             if not ok:
                 self.telegram_listener_healthy = False
                 description = data.get("description", "unknown error")
-                self.after(0, lambda d=description: self.tg_status.configure(
+                self._ui(lambda d=description: self.tg_status.configure(
                     text=f"Telegram listener error: {d}",
                     text_color="#ff8a8a",
                 ))
-                self.after(0, self._refresh_dashboard_metrics)
+                self._ui(self._refresh_dashboard_metrics)
                 time.sleep(4)
                 continue
 
             if not self.telegram_listener_healthy:
                 self.telegram_listener_healthy = True
-                self.after(0, self._refresh_dashboard_metrics)
+                self._ui(self._refresh_dashboard_metrics)
 
             for update in data.get("result", []):
                 update_id = update.get("update_id")
@@ -960,8 +1160,8 @@ class AutoSOCApp(ctk.CTk):
                     self.current_user["telegram_chat_id"] = self.chat_id
                     self.current_user["telegram_user_id"] = str(user_id)
             self.db.set_setting("telegram_chat_id", self.chat_id)
-            self.after(0, self._sync_telegram_chat_id_ui)
-            self.after(0, self._refresh_dashboard_metrics)
+            self._ui(self._sync_telegram_chat_id_ui)
+            self._ui(self._refresh_dashboard_metrics)
 
         if not text:
             return
@@ -970,7 +1170,7 @@ class AutoSOCApp(ctk.CTk):
         command = normalized.split()[0].split("@")[0]
         if command in ("/start", "/id"):
             response = (
-                "AutoSOC AI is connected.\n"
+                "AutoSOC is connected.\n"
                 f"Telegram User ID: {user_id}\n"
                 f"Telegram Chat ID: {chat_id}\n\n"
                 "Use the Telegram Chat ID during registration in the app.\n"
@@ -1012,6 +1212,127 @@ class AutoSOCApp(ctk.CTk):
             return value[1:].isdigit()
         return value.isdigit()
 
+    def toggle_port_canary(self):
+        if not self.port_canary.is_running:
+            status = self.port_canary.start()
+            if status["bound_ports"]:
+                self.result_box.insert(
+                    "0.0",
+                    f"[CANARY] Listening on decoy ports: {', '.join(str(port) for port in status['bound_ports'])}\n",
+                    "ai",
+                )
+                self.status_label.configure(text="PORT CANARY ACTIVE", text_color="#7fe3b1")
+            else:
+                self.result_box.insert("0.0", "[CANARY] Failed to bind decoy ports\n", "danger")
+        else:
+            self.port_canary.stop()
+            self.result_box.insert("0.0", "[CANARY] Decoy listeners stopped\n", "muted")
+            self.status_label.configure(text="SYSTEM READY", text_color="#6bf0a7")
+
+        self._refresh_prevention_status()
+        self._refresh_dashboard_metrics()
+
+    def run_port_canary_self_test(self):
+        if not self.port_canary.is_running:
+            self.port_canary.start()
+        try:
+            test_port = self.port_canary.self_test()
+            self.result_box.insert(
+                "0.0",
+                f"[CANARY TEST] Simulated local connection against decoy port {test_port}\n",
+                "info",
+            )
+            self._refresh_prevention_status()
+        except Exception as exc:
+            self.result_box.insert("0.0", f"[CANARY TEST ERROR] {exc}\n", "danger")
+
+    def harden_risky_ports(self):
+        if self.last_scan_data:
+            risky_ports = [item["port"] for item in self._collect_risks(self.last_scan_data)]
+        else:
+            risky_ports = [21, 23, 445, 3389, 5900, 6379, 27017, 3306, 1433, 1521]
+
+        hardened = []
+        for port in sorted(set(risky_ports)):
+            switch = self.switches.get(port)
+            if switch and switch.get():
+                switch.deselect()
+                self.toggle_port(port, switch)
+                hardened.append(str(port))
+
+        if hardened:
+            message = f"[HARDENING] Blocked risky ports: {', '.join(hardened)}\n"
+            self.result_box.insert("0.0", message, "danger")
+            self.db.add_security_event("hardening_action", "Medium", "local_policy", message.strip())
+        else:
+            self.result_box.insert("0.0", "[HARDENING] No additional risky ports required blocking\n", "success")
+
+        self._refresh_prevention_status()
+        self._refresh_dashboard_metrics()
+
+    def on_canary_trip(self, event):
+        ip = event["source_ip"]
+        port = event["port"]
+        source = f"{ip}:{event['source_port']}"
+        is_local = event.get("is_local", False)
+        severity = "Medium" if is_local else "High"
+        details = (
+            f"Connection attempt detected on decoy port {port} from {source} at {event['timestamp']}."
+            + (" Local self-test or localhost activity." if is_local else " Remote host touched a honeypot port.")
+        )
+
+        self.incident_count += 1
+        self.db.add_security_event("port_canary_trip", severity, source, details)
+
+        if not is_local:
+            rule_name = f"AutoSOC_Canary_Block_{ip}"
+            os.system(f'netsh advfirewall firewall delete rule name="{rule_name}"')
+            os.system(f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip}')
+
+        self._append_result(
+            f"[CANARY ALERT] {details}\n",
+            "danger" if not is_local else "info",
+        )
+        self._set_status("PORT CANARY ALERT", "#ff8a8a" if not is_local else "#ffd36b")
+        self._ui(self._refresh_dashboard_metrics)
+        self._ui(self._refresh_prevention_status)
+
+        if self.chat_id:
+            alert = (
+                f"🚨 *AutoSOC Port Canary*\n\n"
+                f"Source: `{source}`\n"
+                f"Decoy port: `{port}`\n"
+                f"Severity: *{severity}*\n"
+                f"Action: *{'logged only (local test)' if is_local else 'firewall block attempted'}*"
+            )
+            threading.Thread(target=self.send_telegram_alert, args=(alert,), daemon=True).start()
+
+    def show_event_feed(self):
+        win = ctk.CTkToplevel(self)
+        win.title("Event Feed")
+        win.geometry("860x520")
+        win.configure(fg_color="#0a1522")
+        win.attributes("-topmost", True)
+
+        ctk.CTkLabel(
+            win,
+            text="Security Event Feed",
+            text_color="#f4f8fc",
+            font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(anchor="w", padx=20, pady=(20, 8))
+
+        txt = ctk.CTkTextbox(
+            win,
+            fg_color="#08111b",
+            corner_radius=16,
+            text_color="#dce8f2",
+            font=ctk.CTkFont(family="Consolas", size=12),
+        )
+        txt.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+
+        for row in self.db.get_recent_security_events():
+            txt.insert("end", f"{row[0]} | {row[1]} | {row[2]} | {row[3]} | {row[4]}\n")
+
     def toggle_port(self, port, switch_obj):
         is_open = bool(switch_obj.get())
         action = "allow" if is_open else "block"
@@ -1036,19 +1357,23 @@ class AutoSOCApp(ctk.CTk):
     def toggle_guard(self):
         if not self.guard.is_monitoring:
             self.guard.start_monitoring()
-            self.btn_guard.configure(text="AI Guard: Active", fg_color="#1f805d", hover_color="#166446")
-            self.status_label.configure(text="AI GUARD ACTIVE", text_color="#6bf0a7")
+            self.btn_guard.configure(text="Guard: Active", fg_color="#1f805d", hover_color="#166446")
+            self.status_label.configure(text="GUARD ACTIVE", text_color="#6bf0a7")
         else:
             self.guard.stop()
-            self.btn_guard.configure(text="AI Guard: Off", fg_color="#243244", hover_color="#31445b")
+            self.btn_guard.configure(text="Guard: Off", fg_color="#243244", hover_color="#31445b")
             self.status_label.configure(text="SYSTEM READY", text_color="#6bf0a7")
 
     def on_threat_detected(self, ip, reason, cmd):
+        self.incident_count += 1
+        self.db.add_security_event("traffic_spike", "High", ip, f"{reason}. Suggested command: {cmd}")
         alert_ui = f"\n[THREAT] Suspicious activity from {ip}\n[ACTION] Blocked automatically.\n"
-        self.after(0, lambda: self.result_box.insert("0.0", alert_ui, "danger"))
+        self._ui(lambda: self.result_box.insert("0.0", alert_ui, "danger"))
+        self._ui(self._refresh_dashboard_metrics)
+        self._ui(self._refresh_prevention_status)
 
         alert_tg = (
-            f"🚨 *AutoSOC AI Threat Detected*\n\n"
+            f"🚨 *AutoSOC Threat Detected*\n\n"
             f"IP: `{ip}`\n"
             f"Reason: {reason}\n"
             f"Action: Automatically blocked"
@@ -1074,7 +1399,7 @@ class AutoSOCApp(ctk.CTk):
             return
 
         self.ai_chat_window = ctk.CTkToplevel(self)
-        self.ai_chat_window.title("AutoSOC AI Chat")
+        self.ai_chat_window.title("AutoSOC Chat")
         self.ai_chat_window.geometry("470x650")
         self.ai_chat_window.configure(fg_color="#0a1522")
         self.ai_chat_window.attributes("-topmost", True)
@@ -1082,7 +1407,7 @@ class AutoSOCApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.ai_chat_window,
-            text="AutoSOC AI Chat",
+            text="AutoSOC Chat",
             text_color="#f4f8fc",
             font=ctk.CTkFont(size=20, weight="bold"),
         ).pack(anchor="w", padx=18, pady=(18, 6))
@@ -1228,6 +1553,15 @@ class AutoSOCApp(ctk.CTk):
         open_markers = ["open port", "allow port", "aç port", "icazə ver", "открой порт", "разреши порт"]
         secure_markers = ["fix", "secure", "resolve", "remediate", "düzəlt", "həll et", "исправ", "устрани"]
 
+        if any(marker in lowered for marker in ["start canary", "enable canary", "turn on canary", "canary aç", "запусти canary"]):
+            if not self.port_canary.is_running:
+                self.toggle_port_canary()
+            return "I activated the Port Canary decoy listeners to detect suspicious connection attempts early."
+
+        if any(marker in lowered for marker in ["run canary test", "self test", "test attack", "локальный тест canary", "canary test"]):
+            self.run_port_canary_self_test()
+            return "I launched a safe localhost self-test against the decoy port so we can verify the alert path."
+
         if port and any(marker in lowered for marker in close_markers):
             switch = self.switches.get(port)
             if switch and switch.get():
@@ -1245,28 +1579,18 @@ class AutoSOCApp(ctk.CTk):
             return f"I allowed port {port} ({service}) in the Windows firewall."
 
         if self.last_scan_data and any(marker in lowered for marker in secure_markers + ["şübhəli portları bağla", "close suspicious ports", "закрой опасные порты"]):
-            risks = self._collect_risks(self.last_scan_data)
-            blocked_ports = []
-            for risk in risks:
-                risk_port = risk["port"]
-                switch = self.switches.get(risk_port)
-                if switch and switch.get():
-                    switch.deselect()
-                    self.toggle_port(risk_port, switch)
-                    blocked_ports.append(str(risk_port))
-            if blocked_ports:
-                return f"I proactively blocked the risky ports detected in the last scan: {', '.join(blocked_ports)}."
-            return "I reviewed the last scan, but there were no currently open risky ports left to block."
+            self.harden_risky_ports()
+            return "I applied the risky-port hardening routine based on the current scan context."
 
         return None
 
     def _run_ai_request(self, question):
         answer = self.ai_expert.answer_question(question, self.last_scan_data)
-        self.after(0, lambda: self._finish_ai_request(answer))
+        self._ui(lambda: self._finish_ai_request(answer))
 
     def _finish_ai_request(self, answer):
         self.stop_ai_loader()
-        self._append_chat_message("AutoSOC AI", answer)
+        self._append_chat_message("AutoSOC", answer)
         self.assistant_summary.delete("0.0", "end")
         self.assistant_summary.insert("end", answer)
         if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_chat_box"):
@@ -1298,7 +1622,6 @@ class AutoSOCApp(ctk.CTk):
     def run_logic(self, target):
         try:
             scanner = NetworkScanner()
-            analyzer = RiskAnalyzer()
             data = scanner.scan_network(target, ports=list(self.port_definitions.keys()))
             processed_devices = []
 
@@ -1339,7 +1662,7 @@ class AutoSOCApp(ctk.CTk):
                 else:
                     self._append_result("    No open tracked services detected\n", "success")
 
-                risks = analyzer.analyze(open_ports)
+                risks = self.analyzer.analyze(open_ports)
                 for risk in risks:
                     port = risk["port"]
                     service = risk["info"]["service"]
@@ -1348,16 +1671,32 @@ class AutoSOCApp(ctk.CTk):
                         continue
 
                     total_risks += 1
-                    self._append_result(f"    Risk: Port {port} ({service})\n", "danger")
+                    severity = risk["info"]["risk"]
+                    self._append_result(f"    Risk: Port {port} ({service}) [{severity}]\n", "danger")
                     instruction = self.ai_expert.generate_instruction(vendor, port, service, "az")
-                    self._append_result(f"    AI: {instruction}\n", "ai")
+                    self._append_result(f"    Guidance: {instruction}\n", "ai")
                     self._ui(self._refresh_dashboard_metrics)
 
-            risk_score = min(total_risks * 25, 100)
+            findings = self._collect_risks(data)
+            risk_score = self.analyzer.calculate_risk_score(findings)
             self.scan_summary = self.ai_expert.summarize_scan(data, "az")
             self.last_scan_data = data
             self._set_scan_summary_text(self.scan_summary)
             self._ui(self._refresh_dashboard_metrics)
+
+            new_exposures = self._update_exposure_baseline(data)
+            if new_exposures:
+                self._append_result("\n[BASELINE DRIFT] Newly exposed services detected since the previous scan:\n", "info")
+                for exposure in new_exposures:
+                    message = f"    {exposure['ip']} -> port {exposure['port']} ({exposure['service']})\n"
+                    self._append_result(message, "info")
+                    self.db.add_security_event(
+                        "new_exposure",
+                        "Medium",
+                        exposure["ip"],
+                        f"New service exposure detected on port {exposure['port']} ({exposure['service']}).",
+                    )
+            self._ui(self._refresh_prevention_status)
             telegram_devices = []
             for device in data:
                 ip = device.get("ip", "unknown")
@@ -1368,7 +1707,7 @@ class AutoSOCApp(ctk.CTk):
 
             if total_risks > 0:
                 alert_tg = (
-                    f"🔍 *AutoSOC AI Scan Result*\n\n"
+                    f"🔍 *AutoSOC Scan Result*\n\n"
                     f"Target: `{target}`\n"
                     f"Detected threats: *{total_risks}*\n"
                     f"Risk score: *{risk_score}%*\n\n"
@@ -1378,7 +1717,7 @@ class AutoSOCApp(ctk.CTk):
             else:
                 self._append_result("\nNo critical issues detected.\n", "success")
                 alert_tg = (
-                    f"✅ *AutoSOC AI Scan Result*\n\n"
+                    f"✅ *AutoSOC Scan Result*\n\n"
                     f"Target: `{target}`\n"
                     f"Detected threats: *0*\n"
                     f"Risk score: *0%*\n\n"
@@ -1418,6 +1757,9 @@ class AutoSOCApp(ctk.CTk):
         txt.pack(fill="both", expand=True, padx=20, pady=(0, 20))
         for row in self.db.get_all_scans():
             txt.insert("end", f"{row[0]} | {row[1]} | {row[2]}% | {row[3]}\n")
+        txt.insert("end", "\n--- Security Events ---\n")
+        for row in self.db.get_recent_security_events():
+            txt.insert("end", f"{row[0]} | {row[1]} | {row[2]} | {row[3]} | {row[4]}\n")
 
 
 if __name__ == "__main__":
@@ -1425,7 +1767,7 @@ if __name__ == "__main__":
 
     def on_login_success(user):
         app = AutoSOCApp(current_user=user)
-        app.title(f"AutoSOC AI: Cyber Shield v3.0  |  {user['username']} ({user['role']})")
+        app.title(f"AutoSOC: Cyber Shield v3.0  |  {user['username']} ({user['role']})")
         app.mainloop()
 
     login.launch(on_login_success)

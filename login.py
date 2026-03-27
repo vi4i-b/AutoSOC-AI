@@ -4,6 +4,7 @@ import tkinter as tk
 import math
 import os
 import json
+import queue
 import threading
 import time
 import webbrowser
@@ -320,6 +321,7 @@ class LoginWindow(ctk.CTk):
         self.splash = None
         self._splash_after_id = None
         self._closing = False
+        self.ui_queue = queue.Queue()
         load_env_file()
         init_db()
         self.telegram_client = TelegramBotClient(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
@@ -327,7 +329,7 @@ class LoginWindow(ctk.CTk):
         self.telegram_listener_running = False
         _apply_window_icon(self)
 
-        self.title("AutoSOC AI — Giriş")
+        self.title("AutoSOC — Giriş")
         self.resizable(False, False)
         self.configure(fg_color=BG_DEEP)
         self.protocol("WM_DELETE_WINDOW", self._close_window)
@@ -339,6 +341,7 @@ class LoginWindow(ctk.CTk):
 
         self.withdraw()
         self._show_splash()
+        self.after(120, self._drain_ui_queue)
         if self.telegram_client.enabled:
             self._start_telegram_listener()
 
@@ -406,7 +409,7 @@ class LoginWindow(ctk.CTk):
             self.telegram_client.send_message(
                 chat_id,
                 (
-                    "AutoSOC AI registration bot is active.\n"
+                    "AutoSOC registration bot is active.\n"
                     f"Telegram User ID: {user_id}\n"
                     f"Telegram Chat ID: {chat_id}\n\n"
                     "Copy the Telegram Chat ID and paste it into the registration form."
@@ -420,9 +423,29 @@ class LoginWindow(ctk.CTk):
             self.telegram_entry.delete(0, "end")
             self.telegram_entry.insert(0, chat_id)
 
+    def _drain_ui_queue(self):
+        try:
+            while True:
+                callback = self.ui_queue.get_nowait()
+                try:
+                    callback()
+                except tk.TclError:
+                    pass
+        except queue.Empty:
+            pass
+
+        try:
+            if not self._closing and self.winfo_exists():
+                self.after(120, self._drain_ui_queue)
+        except tk.TclError:
+            pass
+
     def _safe_after(self, delay_ms, callback):
         if self._closing or not self.winfo_exists():
             return None
+        if threading.current_thread() is not threading.main_thread():
+            self.ui_queue.put(callback)
+            return True
         try:
             return self.after(delay_ms, callback)
         except tk.TclError:
@@ -507,7 +530,7 @@ class LoginWindow(ctk.CTk):
 
         ctk.CTkLabel(
             card,
-            text="AutoSOC AI",
+            text="AutoSOC",
             font=ctk.CTkFont("Helvetica", title_font, "bold"),
             text_color=TEXT_PRIMARY,
         ).pack()
@@ -734,7 +757,7 @@ class LoginWindow(ctk.CTk):
                 text="✅ Qeydiyyat uğurlu! Daxil olun.",
                 text_color="#2ecc71"
             )
-            messagebox.showinfo("AutoSOC AI", f"'{u}' istifadəçisi yaradıldı!\nTelegram Chat ID linked: {telegram_chat_id}")
+            messagebox.showinfo("AutoSOC", f"'{u}' istifadəçisi yaradıldı!\nTelegram Chat ID linked: {telegram_chat_id}")
         else:
             self.error_label.configure(
                 text="❌ Bu istifadəçi artıq mövcuddur!",

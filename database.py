@@ -56,6 +56,18 @@ class SOCDatabase:
             )
             """
         )
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS security_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT,
+                severity TEXT,
+                source TEXT,
+                details TEXT,
+                created_at TEXT
+            )
+            """
+        )
         self.conn.commit()
 
     def add_scan(self, target, risk, summary):
@@ -148,3 +160,26 @@ class SOCDatabase:
     def delete_setting(self, key):
         self.cursor.execute("DELETE FROM app_settings WHERE key = ?", (str(key),))
         self.conn.commit()
+
+    def add_security_event(self, event_type, severity, source, details):
+        now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        self.cursor.execute(
+            """
+            INSERT INTO security_events (event_type, severity, source, details, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_type, severity, source, details, now),
+        )
+        self.conn.commit()
+
+    def get_recent_security_events(self, limit=50):
+        self.cursor.execute(
+            """
+            SELECT created_at, event_type, severity, source, details
+            FROM security_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
+        return self.cursor.fetchall()

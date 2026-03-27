@@ -1,16 +1,19 @@
 import json
 import os
+from collections import Counter
 from datetime import datetime
 
 import requests
 
+from database import SOCDatabase
+
 
 class AISecurityExpert:
     SYSTEM_PROMPT = (
-        "You are AutoSOC AI, a cybersecurity assistant that should feel like a real SOC copilot. "
+        "You are AutoSOC, a cybersecurity assistant that should feel like a real SOC copilot. "
         "Answer in the user's language when possible, especially Russian, Azerbaijani, or English. "
         "Use the full dialog context, remember the active topic, connect follow-up questions to previous turns, "
-        "and personalize answers based on the recent scan context and persistent memory. "
+        "and personalize answers based on the recent scan context, shared team memory, and persistent memory. "
         "Focus on defensive cybersecurity topics: SOC operations, phishing, brute-force, malware, "
         "incident response, hardening, monitoring, SIEM, firewalling, exposed ports, authentication, "
         "network defense, ransomware, detection, and remediation. "
@@ -28,6 +31,7 @@ class AISecurityExpert:
         self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3.1:8b").strip()
         self.memory_file = os.getenv("AI_MEMORY_FILE", "ai_memory.json").strip() or "ai_memory.json"
         self.history_limit = 16
+        self.shared_db = SOCDatabase()
         self.port_catalog = {
             21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP",
             110: "POP3", 135: "RPC", 139: "NetBIOS", 143: "IMAP", 443: "HTTPS",
@@ -63,6 +67,7 @@ class AISecurityExpert:
             "known_ports": [],
             "recent_findings": [],
             "conversation_summary": "",
+            "shared_lessons": [],
             "last_updated": "",
         }
 
@@ -105,21 +110,21 @@ class AISecurityExpert:
     def localized(self, language, key):
         phrases = {
             "ru": {
-                "greeting": "Привет. Я AutoSOC AI, помощник по кибербезопасности. Помогаю разбирать угрозы, порты, hardening и результаты сканирования.",
+                "greeting": "Привет. Я AutoSOC, помощник по кибербезопасности. Помогаю разбирать угрозы, порты, hardening и результаты сканирования.",
                 "redirect": "Я отвечаю по темам кибербезопасности. Спроси про фишинг, brute-force, malware, hardening, открытые порты или защиту сети.",
                 "no_scan": "Пока нет контекста сканирования. Запусти скан, и я помогу разобрать результат.",
                 "fallback": "Сейчас живой LLM недоступен, поэтому я отвечаю в локальном режиме.",
                 "hello_help": "Можно спросить, например: «Почему опасен 445 порт?», «Что делать после обнаружения RDP?» или «Разбери последний скан».",
             },
             "az": {
-                "greeting": "Salam. Mən AutoSOC AI təhlükəsizlik köməkçisiyəm. Təhdidlər, portlar, hardening və scan nəticələrini izah edə bilərəm.",
+                "greeting": "Salam. Mən AutoSOC təhlükəsizlik köməkçisiyəm. Təhdidlər, portlar, hardening və scan nəticələrini izah edə bilərəm.",
                 "redirect": "Mən əsasən kibertəhlükəsizlik mövzularına cavab verirəm. Fişinq, brute-force, malware, hardening, açıq portlar və şəbəkə müdafiəsi barədə soruşun.",
                 "no_scan": "Hələ scan konteksti yoxdur. Əvvəl scan başladın, sonra nəticəni birlikdə izah edərəm.",
                 "fallback": "Hazırda canlı LLM əlçatan deyil, buna görə lokal rejimdə cavab verirəm.",
                 "hello_help": "Məsələn soruşa bilərsiniz: «445 portu niyə təhlükəlidir?», «RDP açıqdırsa nə etməliyəm?» və ya «Son scan-i izah et».",
             },
             "en": {
-                "greeting": "Hello. I am AutoSOC AI, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results.",
+                "greeting": "Hello. I am AutoSOC, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results.",
                 "redirect": "I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, open ports, or network defense.",
                 "no_scan": "There is no scan context yet. Run a scan first and I will help interpret it.",
                 "fallback": "Live LLM is unavailable right now, so I am answering in local mode.",
@@ -267,6 +272,15 @@ class AISecurityExpert:
         short_answer = answer.replace("\n", " ").strip()
         short_answer = short_answer[:220]
         self.memory["conversation_summary"] = f"User asked: {question[:120]}. Assistant answered: {short_answer}"
+        lessons = self.memory.get("shared_lessons") or []
+        lessons.append(
+            {
+                "question": question[:160],
+                "answer": short_answer,
+                "topic": topic or self.memory.get("active_topic", ""),
+            }
+        )
+        self.memory["shared_lessons"] = lessons[-12:]
         self._save_memory()
 
     def _memory_context(self):
@@ -274,8 +288,13 @@ class AISecurityExpert:
         active_topic = self.memory.get("active_topic") or "none"
         target_ip = self.memory.get("user_profile", {}).get("last_target_ip") or "unknown"
         findings = self.memory.get("recent_findings") or []
+        lessons = self.memory.get("shared_lessons") or []
         finding_text = ", ".join(
             f"{item['ip']}:{item['port']}({item['service']})" for item in findings[-6:]
+        ) or "none"
+        lesson_text = " | ".join(
+            f"{item.get('topic') or 'general'} -> {item.get('question', '')[:60]}"
+            for item in lessons[-4:]
         ) or "none"
 
         return (
@@ -283,7 +302,40 @@ class AISecurityExpert:
             f"Active topic: {active_topic}\n"
             f"Last target IP: {target_ip}\n"
             f"Recent findings: {finding_text}\n"
+            f"Shared lessons: {lesson_text}\n"
             f"Conversation summary: {self.memory.get('conversation_summary', '')}"
+        )
+
+    def _shared_security_context(self):
+        try:
+            scans = self.shared_db.get_all_scans()[:8]
+            events = self.shared_db.get_recent_security_events(8)
+        except Exception:
+            return "Shared security telemetry unavailable."
+
+        target_counts = Counter(row[1] for row in scans if row[1])
+        event_counts = Counter(row[1] for row in events if row[1])
+        avg_risk = 0
+        if scans:
+            avg_risk = round(sum(int(row[2] or 0) for row in scans) / len(scans))
+
+        hottest_targets = ", ".join(f"{target}({count})" for target, count in target_counts.most_common(4)) or "none"
+        hottest_events = ", ".join(f"{event}({count})" for event, count in event_counts.most_common(4)) or "none"
+        recent_scan_lines = "; ".join(
+            f"{row[0]} target={row[1]} risk={row[2]} summary={row[3]}"
+            for row in scans[:5]
+        ) or "none"
+        recent_event_lines = "; ".join(
+            f"{row[0]} type={row[1]} severity={row[2]} source={row[3]}"
+            for row in events[:5]
+        ) or "none"
+
+        return (
+            f"Average recent scan risk: {avg_risk}%\n"
+            f"Most frequent targets across all users: {hottest_targets}\n"
+            f"Most frequent security events across all users: {hottest_events}\n"
+            f"Recent scans across all users: {recent_scan_lines}\n"
+            f"Recent events across all users: {recent_event_lines}"
         )
 
     def build_input(self, question, devices=None):
@@ -293,6 +345,7 @@ class AISecurityExpert:
         input_items = [
             {"role": "system", "content": [{"type": "text", "text": self.SYSTEM_PROMPT}]},
             {"role": "system", "content": [{"type": "text", "text": f"Persistent memory:\n{self._memory_context()}"}]},
+            {"role": "system", "content": [{"type": "text", "text": f"Shared team security memory:\n{self._shared_security_context()}"}]},
             {"role": "system", "content": [{"type": "text", "text": f"Latest scan context:\n{context}"}]},
         ]
 
@@ -347,6 +400,7 @@ class AISecurityExpert:
             "messages": [
                 {"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "system", "content": f"Persistent memory:\n{self._memory_context()}"},
+                {"role": "system", "content": f"Shared team security memory:\n{self._shared_security_context()}"},
                 {"role": "system", "content": f"Latest scan context:\n{self.summarize_scan(devices or [], language)}"},
             ],
             "stream": False,
