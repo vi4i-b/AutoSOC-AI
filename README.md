@@ -49,11 +49,37 @@ Layihə şəbəkə skanı, riskli port analizi, firewall idarəsi, AI izahı və
 
 1. [`requirements.txt`](/C:/Users/user/PycharmProjects/AutoSOC/requirements.txt) faylındakı asılılıqları quraşdırın.
 2. [`.env`](/C:/Users/user/PycharmProjects/AutoSOC/.env) faylına Telegram bot token əlavə edin.
-3. Tətbiqi bu komanda ilə başladın:
+3. Pulsuz lokal süni intellekt üçün Ollama quraşdırın və modeli yükləyin:
+
+```powershell
+ollama pull llama3.1:8b
+ollama serve
+```
+
+4. [`.env`](/C:/Users/user/PycharmProjects/AutoSOC/.env) içində bu dəyərlərdən istifadə edin:
+
+```env
+AI_PROVIDER=auto
+OLLAMA_URL=http://localhost:11434/api/chat
+OLLAMA_MODEL=llama3.1:8b
+```
+
+Əgər `OPENAI_API_KEY` əlavə olunmasa, AutoSOC avtomatik olaraq əvvəlcə lokal `Ollama` modelini yoxlayacaq və onu istifadə edəcək.
+5. Tətbiqi bu komanda ilə başladın:
 
 ```powershell
 python main.py
 ```
+
+## Pulsuz lokal İİ
+
+AutoSOC `AI_PROVIDER=auto` rejimində işləyir:
+
+- `OPENAI_API_KEY` varsa, OpenAI istifadə edir
+- OpenAI açarı yoxdursa, işlək `Ollama` axtarır
+- heç biri yoxdursa, daxili ekspert rejimində cavab verir
+
+Ən rahat pulsuz variant `Ollama + llama3.1:8b` modelidir.
 
 ## Telegram necə işləyir
 

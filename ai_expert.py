@@ -1,11 +1,54 @@
 import json
 import os
+import sys
 from collections import Counter
 from datetime import datetime
 
 import requests
 
 from database import SOCDatabase
+
+
+def load_env_file(path=".env"):
+    candidates = []
+    if path:
+        candidates.append(path)
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates.extend(
+        [
+            os.path.join(os.getcwd(), ".env"),
+            os.path.join(base_dir, ".env"),
+            os.path.join(os.path.dirname(base_dir), ".env"),
+        ]
+    )
+
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.extend(
+            [
+                os.path.join(exe_dir, ".env"),
+                os.path.join(os.path.dirname(exe_dir), ".env"),
+            ]
+        )
+
+    seen = set()
+    for candidate in candidates:
+        normalized = os.path.abspath(candidate)
+        if normalized in seen or not os.path.exists(normalized):
+            continue
+        seen.add(normalized)
+        try:
+            with open(normalized, "r", encoding="utf-8") as env_file:
+                for raw_line in env_file:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            return
+        except OSError:
+            continue
 
 
 class AISecurityExpert:
@@ -24,7 +67,8 @@ class AISecurityExpert:
     )
 
     def __init__(self):
-        self.provider = os.getenv("AI_PROVIDER", "openai").strip().lower()
+        load_env_file()
+        self.provider = os.getenv("AI_PROVIDER", "auto").strip().lower()
         self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat").strip()
@@ -55,6 +99,7 @@ class AISecurityExpert:
         ]
         self.conversation_history = []
         self.memory = self._load_memory()
+        self.live_provider = self._resolve_live_provider()
 
     def _default_memory(self):
         return {
@@ -93,6 +138,31 @@ class AISecurityExpert:
         except OSError:
             pass
 
+    def _ollama_health_url(self):
+        if self.ollama_url.endswith("/api/chat"):
+            return self.ollama_url[:-9] + "/api/tags"
+        return self.ollama_url.rstrip("/") + "/api/tags"
+
+    def _is_ollama_available(self):
+        try:
+            response = requests.get(self._ollama_health_url(), timeout=3)
+            return response.ok
+        except Exception:
+            return False
+
+    def _resolve_live_provider(self):
+        provider = self.provider or "auto"
+        if provider == "openai":
+            return "openai" if self.api_key else None
+        if provider == "ollama":
+            return "ollama" if self._is_ollama_available() else None
+        if provider == "auto":
+            if self.api_key:
+                return "openai"
+            if self._is_ollama_available():
+                return "ollama"
+        return None
+
     def reset_history(self):
         self.conversation_history = []
         self.memory["active_topic"] = ""
@@ -113,21 +183,21 @@ class AISecurityExpert:
                 "greeting": "Привет. Я AutoSOC, помощник по кибербезопасности. Помогаю разбирать угрозы, порты, hardening и результаты сканирования.",
                 "redirect": "Я отвечаю по темам кибербезопасности. Спроси про фишинг, brute-force, malware, hardening, открытые порты или защиту сети.",
                 "no_scan": "Пока нет контекста сканирования. Запусти скан, и я помогу разобрать результат.",
-                "fallback": "Сейчас живой LLM недоступен, поэтому я отвечаю в локальном режиме.",
+                "fallback": "Сейчас я отвечаю встроенным экспертным режимом.",
                 "hello_help": "Можно спросить, например: «Почему опасен 445 порт?», «Что делать после обнаружения RDP?» или «Разбери последний скан».",
             },
             "az": {
                 "greeting": "Salam. Mən AutoSOC təhlükəsizlik köməkçisiyəm. Təhdidlər, portlar, hardening və scan nəticələrini izah edə bilərəm.",
                 "redirect": "Mən əsasən kibertəhlükəsizlik mövzularına cavab verirəm. Fişinq, brute-force, malware, hardening, açıq portlar və şəbəkə müdafiəsi barədə soruşun.",
                 "no_scan": "Hələ scan konteksti yoxdur. Əvvəl scan başladın, sonra nəticəni birlikdə izah edərəm.",
-                "fallback": "Hazırda canlı LLM əlçatan deyil, buna görə lokal rejimdə cavab verirəm.",
+                "fallback": "Hazırda daxili ekspert rejimində cavab verirəm.",
                 "hello_help": "Məsələn soruşa bilərsiniz: «445 portu niyə təhlükəlidir?», «RDP açıqdırsa nə etməliyəm?» və ya «Son scan-i izah et».",
             },
             "en": {
                 "greeting": "Hello. I am AutoSOC, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results.",
                 "redirect": "I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, open ports, or network defense.",
                 "no_scan": "There is no scan context yet. Run a scan first and I will help interpret it.",
-                "fallback": "Live LLM is unavailable right now, so I am answering in local mode.",
+                "fallback": "I am answering with the built-in expert mode right now.",
                 "hello_help": "You can ask, for example: 'Why is port 445 risky?', 'What should I do after exposed RDP?', or 'Explain the last scan.'",
             },
         }
@@ -343,23 +413,23 @@ class AISecurityExpert:
         topic = self.infer_topic(question, devices)
         context = self.summarize_scan(devices or [], language)
         input_items = [
-            {"role": "system", "content": [{"type": "text", "text": self.SYSTEM_PROMPT}]},
-            {"role": "system", "content": [{"type": "text", "text": f"Persistent memory:\n{self._memory_context()}"}]},
-            {"role": "system", "content": [{"type": "text", "text": f"Shared team security memory:\n{self._shared_security_context()}"}]},
-            {"role": "system", "content": [{"type": "text", "text": f"Latest scan context:\n{context}"}]},
+            {"role": "system", "content": [{"type": "input_text", "text": self.SYSTEM_PROMPT}]},
+            {"role": "system", "content": [{"type": "input_text", "text": f"Persistent memory:\n{self._memory_context()}"}]},
+            {"role": "system", "content": [{"type": "input_text", "text": f"Shared team security memory:\n{self._shared_security_context()}"}]},
+            {"role": "system", "content": [{"type": "input_text", "text": f"Latest scan context:\n{context}"}]},
         ]
 
         if topic:
             input_items.append(
-                {"role": "system", "content": [{"type": "text", "text": f"Current inferred topic: {topic}"}]}
+                {"role": "system", "content": [{"type": "input_text", "text": f"Current inferred topic: {topic}"}]}
             )
 
         for item in self.conversation_history[-self.history_limit:]:
             input_items.append(
-                {"role": item["role"], "content": [{"type": "text", "text": item["content"]}]}
+                {"role": item["role"], "content": [{"type": "input_text", "text": item["content"]}]}
             )
 
-        input_items.append({"role": "user", "content": [{"type": "text", "text": question}]})
+        input_items.append({"role": "user", "content": [{"type": "input_text", "text": question}]})
         return input_items
 
     def query_openai(self, question, devices=None):
@@ -514,7 +584,7 @@ class AISecurityExpert:
                 return "Sualın təhlükəsizliklə bağlı olduğunu anladım. Mövzunu bir az dəqiqləşdirin və ya son scan-ə bağlayın: fişinq, açıq port, hardening, malware, brute-force və ya insident."
             return "I understand this is a security question. Narrow it down or connect it to the last scan: phishing, open port, hardening, malware, brute-force, or incident response."
 
-        return f"{self.localized(language, 'fallback')} {self.localized(language, 'redirect')}"
+        return self.localized(language, "redirect")
 
     def answer_question(self, question, devices=None):
         prompt = (question or "").strip()
@@ -530,7 +600,14 @@ class AISecurityExpert:
             self._remember_turn(prompt, answer, self.infer_topic(prompt, devices))
             return answer
 
-        provider_answer = self.query_ollama(prompt, devices) if self.provider == "ollama" else self.query_openai(prompt, devices)
+        self.live_provider = self._resolve_live_provider()
+
+        provider_answer = None
+        if self.live_provider == "openai":
+            provider_answer = self.query_openai(prompt, devices)
+        elif self.live_provider == "ollama":
+            provider_answer = self.query_ollama(prompt, devices)
+
         if provider_answer and not provider_answer.startswith("LLM request failed:") and not provider_answer.startswith("Ollama request failed:"):
             return provider_answer
 
