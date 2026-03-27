@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:/Users/user/PycharmProjects/AutoSOC/.venv/Lib/site-packages/customtkinter', 'customtkinter/'), ('scanner.py', '.'), ('analyzer.py', '.'), ('database.py', '.'), ('guard.py', '.'), ('ai_expert.py', '.'), ('auth.py', '.'), ('login.py', '.'), ('assets/autosoc_logo.png', 'assets'), ('assets/autosoc_logo_splash.png', 'assets'), ('assets/autosoc_logo_login.png', 'assets'), ('assets/app_icon.png', 'assets'), ('assets/app_icon.ico', 'assets')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,6 +35,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    uac_admin=True,
-    icon='assets/app_icon.ico',
 )

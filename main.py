@@ -19,6 +19,7 @@ from auth import get_user_telegram, update_user_telegram
 from canary import PortCanary
 from database import SOCDatabase
 from guard import NetworkGuard
+from log_listener import WindowsLogListener
 from scanner import NetworkScanner
 
 ctk.set_appearance_mode("dark")
@@ -178,6 +179,8 @@ class AutoSOCApp(ctk.CTk):
         self.previous_scan_snapshot = None
         self.latest_new_exposures = []
         self.ui_queue = queue.Queue()
+        self.log_listener = None
+        self.log_listener_warning_shown = False
 
         self.title("AutoSOC: Cyber Shield v3.0")
         self.geometry("1440x960")
@@ -222,6 +225,7 @@ class AutoSOCApp(ctk.CTk):
         self._refresh_prevention_status()
         self._check_telegram_status()
         self.after(120, self._drain_ui_queue)
+        self.start_windows_log_listener()
 
         if self.telegram_client.enabled:
             self.start_telegram_listener()
@@ -1109,6 +1113,51 @@ class AutoSOCApp(ctk.CTk):
         self.after(1200, self.start_telegram_listener)
         self.tg_status.configure(text="Telegram listener restarting...", text_color="#ffd36b")
         self._refresh_dashboard_metrics()
+
+    def start_windows_log_listener(self):
+        if self.log_listener:
+            return
+
+        self.log_listener = WindowsLogListener(
+            on_detection=self.on_windows_bruteforce_detected,
+            on_error=self.on_windows_log_listener_error,
+            event_id=4625,
+            threshold=5,
+            window_seconds=10,
+            poll_interval=1.0,
+        )
+
+        if self.log_listener.start():
+            return
+
+        if os.name == "nt" and not self.log_listener_warning_shown:
+            self.log_listener_warning_shown = True
+            self._append_result(
+                "[WARN] Windows Security log listener unavailable. Install pywin32 to enable Event ID 4625 monitoring.\n",
+                "info",
+                index="0.0",
+            )
+
+    def on_windows_log_listener_error(self, message):
+        if self.log_listener_warning_shown:
+            return
+        self.log_listener_warning_shown = True
+        self._append_result(f"[WARN] {message}\n", "info", index="0.0")
+
+    def on_windows_bruteforce_detected(self, detection):
+        source_ip = detection.get("ip", "unknown")
+        attempt_count = detection.get("attempt_count", 0)
+        window_seconds = detection.get("window_seconds", 10)
+        details = (
+            f"Detected {attempt_count} failed Windows logon events (Event ID 4625) "
+            f"from {source_ip} within {window_seconds} seconds."
+        )
+
+        self.incident_count += 1
+        self.db.add_security_event("ssh_bruteforce", "Critical", source_ip, details)
+        self._append_result(f"[CRITICAL] SSH Brute-force detected from {source_ip}!\n", "danger", index="0.0")
+        self._set_status("SSH BRUTE-FORCE DETECTED", "#ff7c85")
+        self._ui(self._refresh_dashboard_metrics)
 
     def _telegram_polling_loop(self):
         while self.telegram_client.enabled and self.telegram_listener_running:

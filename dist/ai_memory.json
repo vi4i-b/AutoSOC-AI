@@ -1,0 +1,64 @@
+{
+  "preferred_language": "az",
+  "active_topic": "port_445_smb",
+  "user_profile": {
+    "focus_area": "",
+    "last_target_ip": "192.168.31.80"
+  },
+  "known_ports": [
+    22,
+    135,
+    139,
+    445
+  ],
+  "recent_findings": [
+    {
+      "ip": "192.168.31.80",
+      "vendor": "Device",
+      "port": 22,
+      "service": "SSH"
+    },
+    {
+      "ip": "192.168.31.80",
+      "vendor": "Device",
+      "port": 135,
+      "service": "RPC"
+    },
+    {
+      "ip": "192.168.31.80",
+      "vendor": "Device",
+      "port": 139,
+      "service": "NetBIOS"
+    },
+    {
+      "ip": "192.168.31.80",
+      "vendor": "Device",
+      "port": 445,
+      "service": "SMB"
+    }
+  ],
+  "conversation_summary": "User asked: 445 portu niyə təhlükəlidir?. Assistant answered: 192.168.31.80 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.31.80 port 135: RPC xidməti 135-cu portda hücum səthini artırır. ",
+  "shared_lessons": [
+    {
+      "question": "Привет",
+      "answer": "Привет. Я AutoSOC, помощник по кибербезопасности. Помогаю разбирать угрозы, порты, hardening и результаты сканирования. Можно спросить, например: «Почему опасен 445 порт?», «Что делать после обнаружения RDP?» или «Разбер",
+      "topic": ""
+    },
+    {
+      "question": "На какие вопросы умеешь отвечать",
+      "answer": "Live LLM is unavailable right now, so I am answering in local mode. I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, open ports, or network defense.",
+      "topic": ""
+    },
+    {
+      "question": "RDP açıqdırsa nə etməliyəm?",
+      "answer": "I understand this is a security question. Narrow it down or connect it to the last scan: phishing, open port, hardening, malware, brute-force, or incident response.",
+      "topic": "port_445"
+    },
+    {
+      "question": "445 portu niyə təhlükəlidir?",
+      "answer": "192.168.31.80 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.31.80 port 135: RPC xidməti 135-cu portda hücum səthini artırır. ",
+      "topic": "port_445_smb"
+    }
+  ],
+  "last_updated": "27.03.2026 20:41:11"
+}
