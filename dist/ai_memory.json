@@ -3,7 +3,7 @@
   "active_topic": "port_445_smb",
   "user_profile": {
     "focus_area": "",
-    "last_target_ip": "192.168.31.80"
+    "last_target_ip": "192.168.137.1"
   },
   "known_ports": [
     22,
@@ -13,52 +13,92 @@
   ],
   "recent_findings": [
     {
-      "ip": "192.168.31.80",
+      "ip": "192.168.137.1",
       "vendor": "Device",
       "port": 22,
       "service": "SSH"
     },
     {
-      "ip": "192.168.31.80",
+      "ip": "192.168.137.1",
       "vendor": "Device",
       "port": 135,
       "service": "RPC"
     },
     {
-      "ip": "192.168.31.80",
+      "ip": "192.168.137.1",
       "vendor": "Device",
       "port": 139,
       "service": "NetBIOS"
     },
     {
-      "ip": "192.168.31.80",
+      "ip": "192.168.137.1",
       "vendor": "Device",
       "port": 445,
       "service": "SMB"
     }
   ],
-  "conversation_summary": "User asked: 445 portu niyə təhlükəlidir?. Assistant answered: 192.168.31.80 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.31.80 port 135: RPC xidməti 135-cu portda hücum səthini artırır. ",
+  "conversation_summary": "User asked: 445 portu niyə təhlükəlidir?. Assistant answered: 192.168.137.1 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.137.1 port 135: RPC xidməti 135-cu portda hücum səthini artırır. ",
   "shared_lessons": [
     {
-      "question": "Привет",
-      "answer": "Привет. Я AutoSOC, помощник по кибербезопасности. Помогаю разбирать угрозы, порты, hardening и результаты сканирования. Можно спросить, например: «Почему опасен 445 порт?», «Что делать после обнаружения RDP?» или «Разбер",
-      "topic": ""
+      "question": "RDP açıqdırsa nə etməliyəm?",
+      "answer": "SMB is exposed. Disable SMBv1, restrict it with the firewall, verify patching, and block internet exposure.",
+      "topic": "port_445_smb"
     },
     {
-      "question": "На какие вопросы умеешь отвечать",
-      "answer": "Live LLM is unavailable right now, so I am answering in local mode. I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, open ports, or network defense.",
-      "topic": ""
+      "question": "445 portu niyə təhlükəlidir?",
+      "answer": "192.168.1.71 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.1.71 port 135: RPC xidməti 135-cu portda hücum səthini artırır. La",
+      "topic": "port_445_smb"
+    },
+    {
+      "question": "Fişinqdən necə qorunum?",
+      "answer": "Fişinqdən qorunmaq üçün MFA aktiv et, göndərənin domenini yoxla, şübhəli link və əlavələri açma, email filtrasiya tətbiq et və istifadəçiləri maarifləndir.",
+      "topic": "phishing"
+    },
+    {
+      "question": "Son scan nəticəsini izah et",
+      "answer": "192.168.1.71 / Unknown device: open ports -> 22 (SSH), 135 (RPC), 139 (NetBIOS), 445 (SMB).",
+      "topic": "scan_analysis"
+    },
+    {
+      "question": "Explain the current risk posture",
+      "answer": "192.168.1.71 port 22: SSH is open. Prefer keys, disable password login, limit trusted source IPs, and monitor failed login attempts. 192.168.1.71 port 135: RPC on port 135 increases attack surface. If you do not need it,",
+      "topic": "scan_analysis"
     },
     {
       "question": "RDP açıqdırsa nə etməliyəm?",
       "answer": "I understand this is a security question. Narrow it down or connect it to the last scan: phishing, open port, hardening, malware, brute-force, or incident response.",
-      "topic": "port_445"
+      "topic": "scan_analysis"
+    },
+    {
+      "question": "RDP açıqdırsa nə etməliyəm?",
+      "answer": "I understand this is a security question. Narrow it down or connect it to the last scan: phishing, open port, hardening, malware, brute-force, or incident response.",
+      "topic": "scan_analysis"
     },
     {
       "question": "445 portu niyə təhlükəlidir?",
-      "answer": "192.168.31.80 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.31.80 port 135: RPC xidməti 135-cu portda hücum səthini artırır. ",
+      "answer": "192.168.1.71 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.1.71 port 135: RPC xidməti 135-cu portda hücum səthini artırır. La",
+      "topic": "port_445_smb"
+    },
+    {
+      "question": "445 portu niyə təhlükəlidir?",
+      "answer": "172.20.10.4 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 172.20.10.4 port 135: RPC xidməti 135-cu portda hücum səthini artırır. Lazı",
+      "topic": "port_445_smb"
+    },
+    {
+      "question": "445 portu niyə təhlükəlidir?",
+      "answer": "172.20.10.4 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 172.20.10.4 port 135: RPC xidməti 135-cu portda hücum səthini artırır. Lazı",
+      "topic": "port_445_smb"
+    },
+    {
+      "question": "445 portu niyə təhlükəlidir?",
+      "answer": "192.168.137.1 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.137.1 port 135: RPC xidməti 135-cu portda hücum səthini artırır. ",
+      "topic": "port_445_smb"
+    },
+    {
+      "question": "445 portu niyə təhlükəlidir?",
+      "answer": "192.168.137.1 port 22: SSH açıqdır. Açar əsaslı giriş istifadə et, parol girişini söndür, trusted IP-ləri məhdudlaşdır və uğursuz login-ləri izlə. 192.168.137.1 port 135: RPC xidməti 135-cu portda hücum səthini artırır. ",
       "topic": "port_445_smb"
     }
   ],
-  "last_updated": "27.03.2026 20:41:11"
+  "last_updated": "18.04.2026 14:54:13"
 }

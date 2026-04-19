@@ -140,7 +140,7 @@ class WindowsLogListener:
                     "event_id": self.event_id,
                     "attempt_count": len(attempts),
                     "window_seconds": self.window_seconds,
-                    "service": "SSH",
+                    "service": "Windows Logon",
                 }
             )
 

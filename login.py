@@ -1,4 +1,3 @@
-import sys
 import random
 import tkinter as tk
 import math
@@ -9,9 +8,10 @@ import threading
 import time
 import webbrowser
 import customtkinter as ctk
-import requests
 from tkinter import messagebox
 from auth import init_db, verify_user, register_user, save_remember, load_remember, clear_remember, save_latest_telegram_user, get_latest_telegram_chat_id, is_telegram_chat_id_available
+from runtime_support import TelegramBotClient, apply_window_icon, load_env_file, resource_path
+from validators import validate_registration
 
 ctk.set_appearance_mode("dark")
 ctk.deactivate_automatic_dpi_awareness()
@@ -35,98 +35,6 @@ BTN_HOVER_R   = "#1f62ca"
 STAR_COLORS   = ["#ffffff", "#a0c8ff", "#60a0e0", "#304878"]
 GLOW_COLOR    = "#0d2d6e"
 TELEGRAM_BOT_URL = os.getenv("TELEGRAM_BOT_URL", "https://t.me/AutoSOC_Baku_Bot").strip()
-
-
-def _resource_path(*parts):
-    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_path, *parts)
-
-
-def _apply_window_icon(window):
-    png_path = _resource_path("assets", "app_icon.png")
-    ico_path = _resource_path("assets", "app_icon.ico")
-    try:
-        if os.path.exists(png_path):
-            window._app_icon_image = tk.PhotoImage(file=png_path)
-            window.iconphoto(True, window._app_icon_image)
-        if os.name == "nt" and os.path.exists(ico_path):
-            window.iconbitmap(ico_path)
-    except tk.TclError:
-        pass
-
-
-def load_env_file(path=".env"):
-    candidates = []
-    if path:
-        candidates.append(path)
-
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates.extend(
-        [
-            os.path.join(os.getcwd(), ".env"),
-            os.path.join(base_dir, ".env"),
-            os.path.join(os.path.dirname(base_dir), ".env"),
-        ]
-    )
-
-    if getattr(sys, "frozen", False):
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        candidates.extend(
-            [
-                os.path.join(exe_dir, ".env"),
-                os.path.join(os.path.dirname(exe_dir), ".env"),
-            ]
-        )
-
-    seen = set()
-    for candidate in candidates:
-        normalized = os.path.abspath(candidate)
-        if normalized in seen or not os.path.exists(normalized):
-            continue
-        seen.add(normalized)
-        try:
-            with open(normalized, "r", encoding="utf-8") as env_file:
-                for raw_line in env_file:
-                    line = raw_line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-            return
-        except OSError:
-            continue
-
-
-class TelegramBotClient:
-    def __init__(self, token):
-        self.token = (token or "").strip()
-        self.base_url = f"https://api.telegram.org/bot{self.token}" if self.token else ""
-        self.enabled = bool(self.token)
-
-    def get_updates(self, offset=None, timeout=20):
-        if not self.enabled:
-            return False, {"description": "Telegram bot token is empty"}
-        payload = {"timeout": timeout}
-        if offset is not None:
-            payload["offset"] = offset
-        return self._request("getUpdates", payload=payload, timeout=timeout + 10)
-
-    def send_message(self, chat_id, text):
-        if not self.enabled:
-            return False, {"description": "Telegram bot token is empty"}
-        return self._request("sendMessage", method="post", payload={"chat_id": str(chat_id), "text": text}, timeout=30)
-
-    def _request(self, method_name, method="get", payload=None, timeout=30):
-        try:
-            if method == "post":
-                response = requests.post(f"{self.base_url}/{method_name}", json=payload or {}, timeout=timeout)
-            else:
-                response = requests.get(f"{self.base_url}/{method_name}", params=payload or {}, timeout=timeout)
-            response.raise_for_status()
-            data = response.json()
-            return bool(data.get("ok")), data
-        except Exception as exc:
-            return False, {"description": str(exc)}
 
 
 # ═══════════════════════════ HELPERS ══════════════════════════════════
@@ -232,7 +140,7 @@ class SplashScreen(ctk.CTkToplevel):
         self._fade_after_id = None
         self._closed = False
         self.overrideredirect(True)
-        _apply_window_icon(self)
+        apply_window_icon(self)
 
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
@@ -255,7 +163,7 @@ class SplashScreen(ctk.CTkToplevel):
         title_font = max(42, int(54 * splash_scale))
         subtitle_font = max(18, int(20 * splash_scale))
 
-        logo_path = _resource_path("assets", "autosoc_logo_splash.png")
+        logo_path = resource_path("assets", "autosoc_logo_splash.png")
         if os.path.exists(logo_path):
             try:
                 logo_image = tk.PhotoImage(file=logo_path)
@@ -327,7 +235,7 @@ class LoginWindow(ctk.CTk):
         self.telegram_client = TelegramBotClient(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
         self.telegram_offset = None
         self.telegram_listener_running = False
-        _apply_window_icon(self)
+        apply_window_icon(self)
 
         self.title("AutoSOC — Giriş")
         self.resizable(False, False)
@@ -510,7 +418,7 @@ class LoginWindow(ctk.CTk):
         card.pack_propagate(False)
 
         # ── Header ─────────────────────────────────────────────────────
-        logo_path = _resource_path("assets", "autosoc_logo_login.png")
+        logo_path = resource_path("assets", "autosoc_logo_login.png")
         if os.path.exists(logo_path):
             try:
                 login_logo = tk.PhotoImage(file=logo_path)
@@ -743,11 +651,9 @@ class LoginWindow(ctk.CTk):
         if not u or not p or not telegram_chat_id:
             self.error_label.configure(text="⚠️ Qeydiyyat üçün username, password və Telegram Chat ID daxil edin!")
             return
-        if len(u) < 3 or len(p) < 4:
-            self.error_label.configure(text="⚠️ Minimum: Ad 3, Şifrə 4 simvol")
-            return
-        if not self._looks_like_chat_id(telegram_chat_id):
-            self.error_label.configure(text="⚠️ Telegram Chat ID only digits or -digits format accepted.")
+        validation_error = validate_registration(u, p, telegram_chat_id)
+        if validation_error:
+            self.error_label.configure(text=f"⚠️ {validation_error}")
             return
         if not is_telegram_chat_id_available(telegram_chat_id):
             self.error_label.configure(text="⚠️ Bu Telegram Chat ID artıq başqa hesab üçün istifadə olunub.")
@@ -763,13 +669,6 @@ class LoginWindow(ctk.CTk):
                 text="❌ Bu istifadəçi artıq mövcuddur!",
                 text_color="#ff5555"
             )
-
-    def _looks_like_chat_id(self, value):
-        if not value:
-            return False
-        if value.startswith("-"):
-            return value[1:].isdigit()
-        return value.isdigit()
 
 
 # ═══════════════════════════ ENTRY POINT ══════════════════════════════

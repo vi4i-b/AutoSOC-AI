@@ -1,15 +1,15 @@
+import ipaddress
 import json
 import math
 import os
 import queue
 import socket
-import sys
+import subprocess
 import threading
 import time
 import webbrowser
 
 import customtkinter as ctk
-import requests
 import tkinter as tk
 from tkinter import messagebox
 
@@ -20,110 +20,12 @@ from canary import PortCanary
 from database import SOCDatabase
 from guard import NetworkGuard
 from log_listener import WindowsLogListener
+from runtime_support import TelegramBotClient, apply_window_icon, load_env_file
 from scanner import NetworkScanner
+from validators import is_safe_scan_target, looks_like_chat_id
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
-
-
-def _resource_path(*parts):
-    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_path, *parts)
-
-
-def _apply_window_icon(window):
-    png_path = _resource_path("assets", "app_icon.png")
-    ico_path = _resource_path("assets", "app_icon.ico")
-    try:
-        if os.path.exists(png_path):
-            window._app_icon_image = tk.PhotoImage(file=png_path)
-            window.iconphoto(True, window._app_icon_image)
-        if os.name == "nt" and os.path.exists(ico_path):
-            window.iconbitmap(ico_path)
-    except tk.TclError:
-        pass
-
-
-def load_env_file(path=".env"):
-    candidates = []
-    if path:
-        candidates.append(path)
-
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates.extend(
-        [
-            os.path.join(os.getcwd(), ".env"),
-            os.path.join(base_dir, ".env"),
-            os.path.join(os.path.dirname(base_dir), ".env"),
-        ]
-    )
-
-    if getattr(sys, "frozen", False):
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        candidates.extend(
-            [
-                os.path.join(exe_dir, ".env"),
-                os.path.join(os.path.dirname(exe_dir), ".env"),
-            ]
-        )
-
-    seen = set()
-    for candidate in candidates:
-        normalized = os.path.abspath(candidate)
-        if normalized in seen or not os.path.exists(normalized):
-            continue
-        seen.add(normalized)
-        try:
-            with open(normalized, "r", encoding="utf-8") as env_file:
-                for raw_line in env_file:
-                    line = raw_line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-            return
-        except OSError:
-            continue
-
-
-class TelegramBotClient:
-    def __init__(self, token):
-        self.token = (token or "").strip()
-        self.base_url = f"https://api.telegram.org/bot{self.token}" if self.token else ""
-        self.enabled = bool(self.token)
-
-    def get_me(self):
-        if not self.enabled:
-            return False, {"description": "Telegram bot token is empty"}
-        return self._request("getMe", method="get")
-
-    def send_message(self, chat_id, text, parse_mode="Markdown"):
-        if not self.enabled:
-            return False, {"description": "Telegram bot token is empty"}
-        payload = {"chat_id": str(chat_id), "text": text}
-        if parse_mode:
-            payload["parse_mode"] = parse_mode
-        return self._request("sendMessage", method="post", payload=payload)
-
-    def get_updates(self, offset=None, timeout=25):
-        if not self.enabled:
-            return False, {"description": "Telegram bot token is empty"}
-        payload = {"timeout": timeout}
-        if offset is not None:
-            payload["offset"] = offset
-        return self._request("getUpdates", method="get", payload=payload, timeout=timeout + 10)
-
-    def _request(self, method_name, method="get", payload=None, timeout=30):
-        try:
-            if method == "post":
-                response = requests.post(f"{self.base_url}/{method_name}", json=payload or {}, timeout=timeout)
-            else:
-                response = requests.get(f"{self.base_url}/{method_name}", params=payload or {}, timeout=timeout)
-            response.raise_for_status()
-            data = response.json()
-            return bool(data.get("ok")), data
-        except Exception as exc:
-            return False, {"description": str(exc)}
 
 
 class AutoSOCApp(ctk.CTk):
@@ -139,7 +41,7 @@ class AutoSOCApp(ctk.CTk):
     def __init__(self, current_user=None):
         super().__init__()
         load_env_file()
-        _apply_window_icon(self)
+        apply_window_icon(self)
 
         self.db = SOCDatabase()
         self.current_user = current_user or {}
@@ -176,7 +78,7 @@ class AutoSOCApp(ctk.CTk):
         self.ai_fab_animation_tick = 0
         self.chat_history = []
         self.incident_count = 0
-        self.previous_scan_snapshot = None
+        self.previous_scan_snapshot = self._load_exposure_baseline()
         self.latest_new_exposures = []
         self.ui_queue = queue.Queue()
         self.log_listener = None
@@ -999,15 +901,45 @@ class AutoSOCApp(ctk.CTk):
                 snapshot.add((ip, int(port_info["port"])))
         return snapshot
 
+    def _load_exposure_baseline(self):
+        raw_value = self.db.get_setting("exposure_baseline", "")
+        if not raw_value:
+            return None
+
+        try:
+            items = json.loads(raw_value)
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+        snapshot = set()
+        for item in items or []:
+            try:
+                snapshot.add((str(item["ip"]), int(item["port"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return snapshot
+
+    def _persist_exposure_baseline(self):
+        if self.previous_scan_snapshot is None:
+            return
+
+        payload = [
+            {"ip": ip, "port": port}
+            for ip, port in sorted(self.previous_scan_snapshot)
+        ]
+        self.db.set_setting("exposure_baseline", json.dumps(payload))
+
     def _update_exposure_baseline(self, data):
         current_snapshot = self._extract_open_port_snapshot(data)
         if self.previous_scan_snapshot is None:
             self.previous_scan_snapshot = current_snapshot
+            self._persist_exposure_baseline()
             self.latest_new_exposures = []
             return []
 
         new_entries = current_snapshot - self.previous_scan_snapshot
         self.previous_scan_snapshot = current_snapshot
+        self._persist_exposure_baseline()
         self.latest_new_exposures = [
             {"ip": ip, "port": port, "service": self.port_definitions.get(port, "Unknown")}
             for ip, port in sorted(new_entries)
@@ -1056,7 +988,7 @@ class AutoSOCApp(ctk.CTk):
         if not new_id:
             self.tg_status.configure(text="Chat ID is empty.", text_color="#ff8a8a")
             return
-        if not self._looks_like_chat_id(new_id):
+        if not looks_like_chat_id(new_id):
             self.tg_status.configure(text="Chat ID format looks invalid.", text_color="#ff8a8a")
             return
 
@@ -1067,6 +999,11 @@ class AutoSOCApp(ctk.CTk):
                 return
             self.current_user["telegram_chat_id"] = self.chat_id
         self.db.set_setting("telegram_chat_id", self.chat_id)
+        self.db.add_audit_event(
+            "telegram_binding_requested",
+            self.current_user.get("username", "local_operator"),
+            f"Telegram Chat ID set to {self.chat_id}.",
+        )
         self.tg_status.configure(text="Testing Telegram connection...", text_color="#ffd36b")
         self._refresh_dashboard_metrics()
         threading.Thread(target=self._send_test_message, daemon=True).start()
@@ -1077,12 +1014,22 @@ class AutoSOCApp(ctk.CTk):
             "✅ *AutoSOC connected*\nTelegram notifications are now linked to this chat.",
         )
         if ok:
+            self.db.add_audit_event(
+                "telegram_binding_verified",
+                self.current_user.get("username", "local_operator"),
+                f"Telegram notifications verified for {self.chat_id}.",
+            )
             self._ui(lambda: self.tg_status.configure(
                 text=f"Chat ID verified successfully.\nActive chat_id: {self.chat_id}",
                 text_color="#7fe3b1",
             ))
             self._ui(self._refresh_dashboard_metrics)
         else:
+            self.db.add_audit_event(
+                "telegram_binding_failed",
+                self.current_user.get("username", "local_operator"),
+                f"Telegram send failed for {self.chat_id}: {data.get('description', 'unknown error')}",
+            )
             self._ui(lambda: self.tg_status.configure(
                 text=f"Telegram send failed: {data.get('description', 'unknown error')}",
                 text_color="#ff8a8a",
@@ -1148,15 +1095,16 @@ class AutoSOCApp(ctk.CTk):
         source_ip = detection.get("ip", "unknown")
         attempt_count = detection.get("attempt_count", 0)
         window_seconds = detection.get("window_seconds", 10)
+        service_name = detection.get("service", "Windows Logon")
         details = (
             f"Detected {attempt_count} failed Windows logon events (Event ID 4625) "
             f"from {source_ip} within {window_seconds} seconds."
         )
 
         self.incident_count += 1
-        self.db.add_security_event("ssh_bruteforce", "Critical", source_ip, details)
-        self._append_result(f"[CRITICAL] SSH Brute-force detected from {source_ip}!\n", "danger", index="0.0")
-        self._set_status("SSH BRUTE-FORCE DETECTED", "#ff7c85")
+        self.db.add_security_event("windows_bruteforce", "Critical", source_ip, details)
+        self._append_result(f"[CRITICAL] {service_name} brute-force detected from {source_ip}!\n", "danger", index="0.0")
+        self._set_status("WINDOWS BRUTE-FORCE DETECTED", "#ff7c85")
         self._ui(self._refresh_dashboard_metrics)
 
     def _telegram_polling_loop(self):
@@ -1254,13 +1202,6 @@ class AutoSOCApp(ctk.CTk):
             text_color="#7fe3b1",
         )
 
-    def _looks_like_chat_id(self, value):
-        if not value:
-            return False
-        if value.startswith("-"):
-            return value[1:].isdigit()
-        return value.isdigit()
-
     def toggle_port_canary(self):
         if not self.port_canary.is_running:
             status = self.port_canary.start()
@@ -1333,13 +1274,19 @@ class AutoSOCApp(ctk.CTk):
         self.incident_count += 1
         self.db.add_security_event("port_canary_trip", severity, source, details)
 
+        block_result = "logged only"
         if not is_local:
-            rule_name = f"AutoSOC_Canary_Block_{ip}"
-            os.system(f'netsh advfirewall firewall delete rule name="{rule_name}"')
-            os.system(f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip}')
+            blocked, rule_name, block_result = self._block_ip_in_firewall(ip, rule_prefix="AutoSOC_Canary_Block")
+            if not blocked:
+                self.db.add_security_event(
+                    "firewall_action_failed",
+                    "Medium",
+                    source,
+                    f"Canary block failed. Rule: {rule_name or 'n/a'}. Result: {block_result}",
+                )
 
         self._append_result(
-            f"[CANARY ALERT] {details}\n",
+            f"[CANARY ALERT] {details}\n[CANARY ACTION] {block_result}\n",
             "danger" if not is_local else "info",
         )
         self._set_status("PORT CANARY ALERT", "#ff8a8a" if not is_local else "#ffd36b")
@@ -1384,18 +1331,20 @@ class AutoSOCApp(ctk.CTk):
 
     def toggle_port(self, port, switch_obj):
         is_open = bool(switch_obj.get())
-        action = "allow" if is_open else "block"
-        rule_name = f"AutoSOC_Manual_{port}"
-        os.system(f'netsh advfirewall firewall delete rule name="{rule_name}"')
-        os.system(
-            f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action={action} protocol=TCP localport={port}'
-        )
         service = self.port_definitions.get(port, "Unknown")
+        success, rule_name, firewall_message = self._set_port_firewall_rule(port, is_open)
         state_text = "ALLOWED" if is_open else "BLOCKED"
+        result_state = state_text if success else f"{state_text} (with error)"
         self.result_box.insert(
             "0.0",
-            f"[FIREWALL] Port {port} ({service}) {state_text}\n",
-            "success" if is_open else "danger",
+            f"[FIREWALL] Port {port} ({service}) {result_state}\n{firewall_message}\n",
+            "success" if success and is_open else "danger" if not is_open else "info",
+        )
+        self.db.add_security_event(
+            "firewall_port_change",
+            "Low" if is_open else "Medium",
+            "local_firewall",
+            f"Port {port} ({service}) -> {state_text}. Rule: {rule_name or 'n/a'}. Result: {firewall_message}",
         )
         self._refresh_dashboard_metrics()
 
@@ -1413,11 +1362,96 @@ class AutoSOCApp(ctk.CTk):
             self.btn_guard.configure(text="Guard: Off", fg_color="#243244", hover_color="#31445b")
             self.status_label.configure(text="SYSTEM READY", text_color="#6bf0a7")
 
+    def _run_netsh(self, arguments):
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            return subprocess.run(
+                ["netsh", *arguments],
+                capture_output=True,
+                text=True,
+                check=False,
+                creationflags=creation_flags,
+            )
+        except OSError as exc:
+            class _NetshErrorResult:
+                def __init__(self, message):
+                    self.returncode = 1
+                    self.stdout = ""
+                    self.stderr = str(message)
+
+            return _NetshErrorResult(exc)
+
+    def _set_port_firewall_rule(self, port, allow_traffic):
+        rule_name = f"AutoSOC_Manual_{int(port)}"
+        action = "allow" if allow_traffic else "block"
+        self._run_netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule_name}"])
+        result = self._run_netsh(
+            [
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                f"name={rule_name}",
+                "dir=in",
+                f"action={action}",
+                "protocol=TCP",
+                f"localport={int(port)}",
+            ]
+        )
+        combined_output = " ".join(
+            part.strip()
+            for part in (getattr(result, "stdout", ""), getattr(result, "stderr", ""))
+            if part and part.strip()
+        )
+        if result.returncode == 0:
+            return True, rule_name, combined_output or "Firewall rule updated successfully."
+        return False, rule_name, combined_output or f"netsh exited with code {result.returncode}."
+
+    def _block_ip_in_firewall(self, ip, rule_prefix="AutoSOC_Guard_Block"):
+        try:
+            normalized_ip = str(ipaddress.ip_address(str(ip).strip()))
+        except ValueError:
+            return False, "", f"Invalid IP address: {ip}"
+
+        rule_name = f"{rule_prefix}_{normalized_ip}"
+        self._run_netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule_name}"])
+        add_result = self._run_netsh(
+            [
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                f"name={rule_name}",
+                "dir=in",
+                "action=block",
+                f"remoteip={normalized_ip}",
+            ]
+        )
+
+        combined_output = " ".join(
+            part.strip()
+            for part in (add_result.stdout, add_result.stderr)
+            if part and part.strip()
+        )
+        if add_result.returncode == 0:
+            return True, rule_name, combined_output or "Firewall rule added successfully."
+        return False, rule_name, combined_output or f"netsh exited with code {add_result.returncode}."
+
     def on_threat_detected(self, ip, reason, cmd):
         self.incident_count += 1
-        self.db.add_security_event("traffic_spike", "High", ip, f"{reason}. Suggested command: {cmd}")
-        alert_ui = f"\n[THREAT] Suspicious activity from {ip}\n[ACTION] Blocked automatically.\n"
+        blocked, rule_name, block_message = self._block_ip_in_firewall(ip)
+        action_text = "Blocked automatically." if blocked else "Automatic block failed. Manual action required."
+        self.db.add_security_event(
+            "traffic_spike",
+            "High",
+            ip,
+            f"{reason}. Firewall rule: {rule_name or 'n/a'}. Result: {block_message}. Suggested command: {cmd}",
+        )
+        alert_ui = f"\n[THREAT] Suspicious activity from {ip}\n[ACTION] {action_text}\n"
+        if not blocked:
+            alert_ui += f"[DETAIL] {block_message}\n"
         self._ui(lambda: self.result_box.insert("0.0", alert_ui, "danger"))
+        self._set_status("GUARD BLOCKED THREAT" if blocked else "GUARD ALERT", "#ff8a8a")
         self._ui(self._refresh_dashboard_metrics)
         self._ui(self._refresh_prevention_status)
 
@@ -1425,8 +1459,10 @@ class AutoSOCApp(ctk.CTk):
             f"🚨 *AutoSOC Threat Detected*\n\n"
             f"IP: `{ip}`\n"
             f"Reason: {reason}\n"
-            f"Action: Automatically blocked"
+            f"Action: {'Automatically blocked' if blocked else 'Automatic block failed'}"
         )
+        if not blocked:
+            alert_tg += f"\nDetails: {block_message}"
         threading.Thread(target=self.send_telegram_alert, args=(alert_tg,), daemon=True).start()
 
     def animate_ai_fab(self):
@@ -1540,6 +1576,12 @@ class AutoSOCApp(ctk.CTk):
         if not target:
             messagebox.showwarning("Target Required", "Please enter an IP address or hostname.")
             return
+        if not is_safe_scan_target(target):
+            messagebox.showwarning(
+                "Invalid Target",
+                "Enter a single IP address, CIDR range, hostname, or localhost without spaces or special shell characters.",
+            )
+            return
         self.last_scan_data = []
         self.btn_scan.configure(state="disabled", text="Scanning...")
         self.status_label.configure(text="SCAN IN PROGRESS", text_color="#ffd36b")
@@ -1547,6 +1589,7 @@ class AutoSOCApp(ctk.CTk):
         self.assistant_summary.delete("0.0", "end")
         self.assistant_summary.insert("end", "Scan in progress. Metrics will refresh as devices are processed.")
         self._refresh_dashboard_metrics()
+        self.db.add_audit_event("scan_started", self.current_user.get("username", "local_operator"), f"Target: {target}")
         threading.Thread(target=self.run_logic, args=(target,), daemon=True).start()
 
     def ask_ai_assistant(self, preset_question=None):
@@ -1775,8 +1818,18 @@ class AutoSOCApp(ctk.CTk):
                 threading.Thread(target=self.send_telegram_alert, args=(alert_tg,), daemon=True).start()
 
             self.db.add_scan(target, risk_score, f"{total_risks} problem(s)")
+            self.db.add_audit_event(
+                "scan_completed",
+                self.current_user.get("username", "local_operator"),
+                f"Target: {target}. Risk score: {risk_score}. Threats: {total_risks}.",
+            )
         except Exception as exc:
             self._append_result(f"\n[ERROR] {exc}\n", "danger")
+            self.db.add_audit_event(
+                "scan_failed",
+                self.current_user.get("username", "local_operator"),
+                f"Target: {target}. Error: {exc}",
+            )
         finally:
             self._ui(lambda: self.btn_scan.configure(state="normal", text="Network Scan"))
             self._set_status("SYSTEM READY", "#6bf0a7")
@@ -1809,6 +1862,9 @@ class AutoSOCApp(ctk.CTk):
         txt.insert("end", "\n--- Security Events ---\n")
         for row in self.db.get_recent_security_events():
             txt.insert("end", f"{row[0]} | {row[1]} | {row[2]} | {row[3]} | {row[4]}\n")
+        txt.insert("end", "\n--- Audit Events ---\n")
+        for row in self.db.get_recent_audit_events():
+            txt.insert("end", f"{row[0]} | {row[1]} | {row[2]} | {row[3]}\n")
 
 
 if __name__ == "__main__":
