@@ -1,25 +1,27 @@
 # Навигация по коду AutoSOC AI
 
 Этот документ нужен команде, которая не пишет код каждый день.
-Его цель — быстро объяснить, какой файл за что отвечает.
+Его цель — быстро объяснить, какой файл за что отвечает после последних изменений в проекте.
 
 ## Общая логика проекта
 
-Проект можно разделить на 4 части:
+Сейчас проект удобнее делить на 6 частей:
 
 1. Вход и регистрация
-2. Основной dashboard
-3. Логика кибербезопасности
-4. Хранение данных и интеграции
+2. Основной dashboard и UI
+3. Сканирование и анализ рисков
+4. Мониторинг, firewall и реакция на угрозы
+5. Хранение данных и аудит
+6. AI, helper и validation слой
 
 Если запомнить совсем коротко:
 
 - [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py) - вход в приложение
-- [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py) - основное окно и логика работы
-- [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py) - сканирование портов
+- [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py) - основное окно и рабочая логика
+- [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py) - сетевое сканирование
 - [`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py) - определение рисков
 - [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py) - пользователи и Telegram-привязка
-- [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py) - история и настройки
+- [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py) - история, настройки, audit и security events
 
 ## Объяснение по файлам
 
@@ -30,19 +32,21 @@
 Здесь находятся:
 
 - основной dashboard
-- верхние карточки с метриками
+- карточки с метриками
 - управление портами
 - консоль сканирования
 - Telegram status
 - AI-помощник
-- отправка alert в Telegram
+- canary и incident reaction
+- firewall-операции
 
 Если проблема связана с:
 
 - цифрами на панели
-- показом результатов скана
+- показом результатов scan
 - Telegram alert
-- блокировкой портов
+- firewall-поведением
+- canary / guard реакцией
 - AI-панелью
 
 то сначала смотреть нужно [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py).
@@ -65,33 +69,50 @@
 - форме регистрации
 - scroll в форме
 - ответе бота во время регистрации
+- первичной валидации пользователя
 
 то смотреть нужно [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py).
 
 ## 3. `auth.py`
 
-Этот файл управляет пользователями.
+Этот файл управляет пользовательскими сценариями.
 
 Он делает:
 
-- создание таблицы пользователей
 - проверку логина
 - регистрацию нового аккаунта
+- remember me
 - запрет повторного использования одного Telegram Chat ID
-- хранение Telegram-привязки
+- координацию между локальной и Windows-аутентификацией
 
 Если проблема в:
 
 - создании аккаунта
 - входе
 - уникальности Telegram Chat ID
+- remember me
 - привязке аккаунта к Telegram
 
 нужно открыть [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py).
 
-## 4. `scanner.py`
+## 4. `database.py`
 
-Этот файл запускает сканирование через Nmap.
+Это единый слой SQLite.
+
+Он хранит:
+
+- историю сканов
+- Telegram-данные
+- настройки приложения
+- security events
+- audit events
+- exposure baseline
+
+Если проблема связана с сохранением, миграцией или журналами, смотреть нужно [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py).
+
+## 5. `scanner.py`
+
+Этот файл запускает scan через Nmap.
 
 Он:
 
@@ -99,42 +120,46 @@
 - возвращает открытые порты
 - формирует сводку checked/open/closed/filtered
 
-Если проблема в сканировании, смотреть нужно [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py).
+Если проблема в scan flow, смотреть нужно [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py).
 
-## 5. `analyzer.py`
+## 6. `analyzer.py`
 
-Этот файл содержит простую базу рисков.
+Этот файл содержит базу рисков.
 
 Он отвечает за:
 
 - какие порты считаются опасными
 - какое описание риска показывать
+- какой severity учитывать
 
-Если нужно добавить новые risk ports, редактируется [`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py).
-
-## 6. `database.py`
-
-Этот файл хранит:
-
-- историю сканов
-- Telegram-данные
-- настройки приложения
-
-Если проблема связана с сохранением, смотреть нужно [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py).
+Если нужно менять risk logic, редактируется [`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py).
 
 ## 7. `guard.py`
 
-Этот файл отвечает за мониторинг и автоматическую реакцию.
+Этот файл отвечает за мониторинг трафика и автоматическую реакцию.
 
 Если проблема в:
 
 - threat monitoring
+- threshold
 - auto block
 - suspicious traffic
 
 смотрите [`guard.py`](/C:/Users/user/PycharmProjects/AutoSOC/guard.py).
 
-## 8. `ai_expert.py`
+## 8. `log_listener.py`
+
+Этот файл отвечает за Windows Security log.
+
+Он:
+
+- отслеживает failed logon events
+- ищет brute-force паттерны
+- передаёт detection в основной UI
+
+Если проблема в Windows log detection, смотреть нужно [`log_listener.py`](/C:/Users/user/PycharmProjects/AutoSOC/log_listener.py).
+
+## 9. `ai_expert.py`
 
 Этот файл отвечает за AI-пояснения.
 
@@ -142,10 +167,58 @@
 
 - summary скана
 - ответы ассистента
-- текст рекомендаций
+- prompt behavior
+- fallback expert mode
+- language detection
 
 Файл:
 [`ai_expert.py`](/C:/Users/user/PycharmProjects/AutoSOC/ai_expert.py)
+
+## 10. Helper-файлы
+
+### `runtime_support.py`
+
+Здесь собраны общие runtime helper-ы:
+
+- загрузка `.env`
+- работа с иконками
+- общий Telegram client
+
+Файл:
+[`runtime_support.py`](/C:/Users/user/PycharmProjects/AutoSOC/runtime_support.py)
+
+### `security_utils.py`
+
+Здесь лежит логика безопасности паролей:
+
+- hash
+- verify
+- совместимость со старым форматом
+- проверка необходимости rehash
+
+Файл:
+[`security_utils.py`](/C:/Users/user/PycharmProjects/AutoSOC/security_utils.py)
+
+### `validators.py`
+
+Здесь находится валидация:
+
+- username
+- password
+- Telegram Chat ID
+- safe scan target
+
+Файл:
+[`validators.py`](/C:/Users/user/PycharmProjects/AutoSOC/validators.py)
+
+## 11. Тесты
+
+В папке [`tests/`](/C:/Users/user/PycharmProjects/AutoSOC/tests) находятся базовые smoke и unit tests.
+
+Сейчас особенно важны:
+
+- [`tests/test_database.py`](/C:/Users/user/PycharmProjects/AutoSOC/tests/test_database.py)
+- [`tests/test_security_utils.py`](/C:/Users/user/PycharmProjects/AutoSOC/tests/test_security_utils.py)
 
 ## Куда смотреть при типичных задачах
 
@@ -166,6 +239,7 @@
 - [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py)
 - [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)
 - [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py)
+- [`runtime_support.py`](/C:/Users/user/PycharmProjects/AutoSOC/runtime_support.py)
 
 ### Изменить dashboard metrics
 
@@ -176,30 +250,29 @@
 
 - `_refresh_dashboard_metrics`
 - `_count_live_open_ports`
-- `_count_live_risky_ports`
+- `_update_exposure_baseline`
 
-### Изменить Telegram-сообщение после скана
+### Изменить firewall behavior
 
 Смотреть:
 [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)
 
 Нужные методы:
 
-- `send_telegram_alert`
-- `run_logic`
-- `_handle_telegram_update`
+- `toggle_port`
+- `_set_port_firewall_rule`
+- `_block_ip_in_firewall`
 
-## Как объяснять проект судьям
+### Изменить audit или event хранение
 
-Удобная логика объяснения:
+Смотреть:
+[`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py)
 
-1. Пользователь входит через login/registration
-2. Привязывает Telegram Chat ID
-3. Приложение сканирует порты
-4. Выявляет рискованные сервисы
-5. Позволяет блокировать порты
-6. Показывает результат на экране и отправляет его в Telegram
-7. AI объясняет, что делать дальше
+Нужные методы:
+
+- `add_security_event`
+- `add_audit_event`
+- `set_setting`
 
 ## Если вы не разработчик
 
@@ -207,6 +280,15 @@
 
 - проблема UI -> [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py) или [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)
 - проблема Telegram -> [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py), [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py), [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py)
-- проблема пользователя -> [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py)
-- проблема скана -> [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py)
+- проблема пользователя -> [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py), [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py)
+- проблема scan -> [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py)
 - проблема риска -> [`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py)
+- проблема validation -> [`validators.py`](/C:/Users/user/PycharmProjects/AutoSOC/validators.py)
+- проблема хранения и аудита -> [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py)
+
+## Дополнительные управленческие документы
+
+- [`docs/ru/PROGRAMMER_TASKS.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/PROGRAMMER_TASKS.md)
+- [`docs/ru/AI_DEVELOPER_TASKS.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/AI_DEVELOPER_TASKS.md)
+
+Этого документа достаточно, чтобы быстро ориентироваться в кодовой базе.
