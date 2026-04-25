@@ -89,7 +89,9 @@ class AutoSOCApp(ctk.CTk):
         self.minsize(1280, 840)
         self.configure(fg_color="#07111b")
 
-        self.grid_columnconfigure(0, weight=0)
+        # fixed width for sidebar; for now it's 390
+        self.grid_columnconfigure(0, minsize=390, weight=0)
+        # main panel
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -179,9 +181,13 @@ class AutoSOCApp(ctk.CTk):
         self._ui(lambda: self.status_label.configure(text=text, text_color=color))
 
     def _build_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=390, fg_color="#0b1623", corner_radius=0)
+        # width depends on the column
+        self.sidebar = ctk.CTkFrame(self, fg_color="#0b1623", corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_propagate(False)
+        #self.sidebar.grid_propagate(False)
+
+        default_wraplength = 300
+
         self.sidebar_scroll = ctk.CTkScrollableFrame(
             self.sidebar,
             fg_color="transparent",
@@ -204,7 +210,7 @@ class AutoSOCApp(ctk.CTk):
             text="SOC cockpit for network visibility, response, and Telegram alerting",
             font=ctk.CTkFont(size=12),
             text_color="#8ea8bf",
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 18))
 
@@ -276,7 +282,7 @@ class AutoSOCApp(ctk.CTk):
             text="Lower values react faster. Higher values reduce false positives.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
 
@@ -351,7 +357,7 @@ class AutoSOCApp(ctk.CTk):
             text="Canary idle. Risky-port hardening is ready.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         )
         self.prevention_status.pack(anchor="w", padx=16, pady=(0, 16))
@@ -472,7 +478,7 @@ class AutoSOCApp(ctk.CTk):
             text_color="#87a5c0",
             font=ctk.CTkFont(size=11),
             justify="left",
-            wraplength=310,
+            wraplength=default_wraplength,
         )
         self.tg_status.pack(anchor="w", padx=16, pady=(0, 10))
 
@@ -520,7 +526,7 @@ class AutoSOCApp(ctk.CTk):
             text="Write /start to the bot. The app will capture the Chat ID and use it for notifications.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
 
