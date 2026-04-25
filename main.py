@@ -94,7 +94,9 @@ class AutoSOCApp(ctk.CTk):
         self.minsize(1280, 840)
         self.configure(fg_color="#07111b")
 
-        self.grid_columnconfigure(0, weight=0)
+        # fixed width for sidebar; for now it's 390
+        self.grid_columnconfigure(0, minsize=390, weight=0)
+        # main panel
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -184,9 +186,13 @@ class AutoSOCApp(ctk.CTk):
         self._ui(lambda: self.status_label.configure(text=text, text_color=color))
 
     def _build_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=390, fg_color="#0b1623", corner_radius=0)
+        # width depends on the column
+        self.sidebar = ctk.CTkFrame(self, fg_color="#0b1623", corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_propagate(False)
+        #self.sidebar.grid_propagate(False)
+
+        default_wraplength = 300
+
         self.sidebar_scroll = ctk.CTkScrollableFrame(
             self.sidebar,
             fg_color="transparent",
@@ -209,7 +215,7 @@ class AutoSOCApp(ctk.CTk):
             text="SOC cockpit for network visibility, response, and Telegram alerting",
             font=ctk.CTkFont(size=12),
             text_color="#8ea8bf",
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 18))
 
@@ -281,7 +287,7 @@ class AutoSOCApp(ctk.CTk):
             text="Lower values react faster. Higher values reduce false positives.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
 
@@ -356,7 +362,7 @@ class AutoSOCApp(ctk.CTk):
             text="Canary idle. Risky-port hardening is ready.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         )
         self.prevention_status.pack(anchor="w", padx=16, pady=(0, 16))
@@ -414,21 +420,15 @@ class AutoSOCApp(ctk.CTk):
             orientation="vertical",
             command=self.ports_canvas.yview,
         )
-        ports_y_scroll.pack(side="right", fill="y", padx=(6, 8), pady=8)
+        ports_y_scroll.pack( fill="y", padx=(6, 8), pady=8)
         self.ports_canvas.configure(yscrollcommand=ports_y_scroll.set)
 
         self.ports_frame = ctk.CTkFrame(self.ports_canvas, fg_color="#0c1623", corner_radius=0)
         self.ports_canvas_window = self.ports_canvas.create_window((0, 0), window=self.ports_frame, anchor="nw")
 
-        def sync_port_scrollregion(_event=None):
-            self.ports_canvas.configure(scrollregion=self.ports_canvas.bbox("all"))
-
-        self.ports_frame.bind("<Configure>", sync_port_scrollregion)
-
         for port, service in sorted(self.port_definitions.items()):
             switch = ctk.CTkSwitch(
                 self.ports_frame,
-                width=470,
                 text=f"Port {port}  •  {service}",
                 progress_color="#2b7fff",
                 button_color="#d2e3ff",
@@ -441,13 +441,46 @@ class AutoSOCApp(ctk.CTk):
 
         self.ports_canvas.configure(scrollregion=self.ports_canvas.bbox("all"))
 
-        ports_x_scroll = ctk.CTkScrollbar(
-            ports_card,
-            orientation="horizontal",
-            command=self.ports_canvas.xview,
-        )
-        ports_x_scroll.pack(fill="x", padx=16, pady=(0, 16))
-        self.ports_canvas.configure(xscrollcommand=ports_x_scroll.set)
+        # code below is used to scroll ports list only
+        parent_scroll_func = self.sidebar_scroll._mouse_wheel_all
+
+        def scroll_only_ports(event):
+            # Linux (Button 4/5) или Windows (delta)
+            if event.num == 4 or event.delta > 0:
+                self.ports_canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or event.delta < 0:
+                self.ports_canvas.yview_scroll(1, "units")
+
+        def on_enter_ports(event):
+            # disable scroll in parent
+            self.sidebar_scroll.unbind_all("<MouseWheel>")
+            self.sidebar_scroll.unbind_all("<Button-4>")
+            self.sidebar_scroll.unbind_all("<Button-5>")
+
+            # enable scroll in ports list
+            self.ports_canvas.bind_all("<MouseWheel>", scroll_only_ports)
+            self.ports_canvas.bind_all("<Button-4>", scroll_only_ports)
+            self.ports_canvas.bind_all("<Button-5>", scroll_only_ports)
+
+        def on_leave_ports(event):
+            # disable scroll in ports list
+            self.ports_canvas.unbind_all("<MouseWheel>")
+            self.ports_canvas.unbind_all("<Button-4>")
+            self.ports_canvas.unbind_all("<Button-5>")
+
+            # return to parent
+            self.sidebar_scroll.bind_all("<MouseWheel>", parent_scroll_func)
+            self.sidebar_scroll.bind_all("<Button-4>", parent_scroll_func)
+            self.sidebar_scroll.bind_all("<Button-5>", parent_scroll_func)
+
+        # switch bindings
+        self.ports_canvas.bind("<Enter>", on_enter_ports)
+        self.ports_canvas.bind("<Leave>", on_leave_ports)
+
+        self.ports_canvas.bind("<Configure>", lambda e: self.ports_canvas.itemconfig(
+            self.ports_canvas_window, width=e.width))
+        self.ports_frame.bind("<Configure>", lambda e: self.ports_canvas.configure(
+            scrollregion=self.ports_canvas.bbox("all")))
 
         telegram_card = ctk.CTkFrame(self.sidebar_scroll, fg_color="#101c2b", corner_radius=18)
         telegram_card.pack(fill="x", padx=22, pady=(0, 22))
@@ -477,7 +510,7 @@ class AutoSOCApp(ctk.CTk):
             text_color="#87a5c0",
             font=ctk.CTkFont(size=11),
             justify="left",
-            wraplength=310,
+            wraplength=default_wraplength,
         )
         self.tg_status.pack(anchor="w", padx=16, pady=(0, 10))
 
@@ -525,7 +558,7 @@ class AutoSOCApp(ctk.CTk):
             text="Write /start to the bot. The app will capture the Chat ID and use it for notifications.",
             text_color="#7f95ab",
             font=ctk.CTkFont(size=11),
-            wraplength=310,
+            wraplength=default_wraplength,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
 
