@@ -6,7 +6,7 @@ from runtime_support import load_env_file
 
 
 class NvidiaSecurityAI:
-    DEFAULT_SYSTEM_PROMPT = "Ты — аналитик безопасности AutoSOC. Проанализируй порты и дай краткий совет на русском"
+    DEFAULT_SYSTEM_PROMPT = "Ты — аналитик безопасности AutoSOC. Проанализируй порты и дай краткий совет на русском."
 
     def __init__(self):
         load_env_file()
@@ -16,7 +16,13 @@ class NvidiaSecurityAI:
             "NVIDIA_API_BASE_URL",
             "https://integrate.api.nvidia.com/v1/chat/completions",
         ).strip()
-        self.timeout = int(os.getenv("NVIDIA_API_TIMEOUT", "60"))
+        self.timeout = int(os.getenv("NVIDIA_API_TIMEOUT", "18"))
+        self.last_error = ""
+        self.fallback_models = [
+            self.model,
+            "deepseek-ai/deepseek-v3",
+            "meta/llama-3.1-8b-instruct",
+        ]
 
     @property
     def enabled(self):
@@ -48,7 +54,7 @@ class NvidiaSecurityAI:
         if devices:
             messages.append(
                 {
-                    "role": "context",
+                    "role": "system",
                     "content": "Контекст последнего сканирования AutoSOC:\n" + self._scan_context(devices),
                 }
             )
@@ -57,31 +63,56 @@ class NvidiaSecurityAI:
         return self._chat(messages)
 
     def _chat(self, messages):
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": self.DEFAULT_SYSTEM_PROMPT}, *messages],
-            "temperature": 0.2,
-            "max_tokens": 500,
-        }
+        self.last_error = ""
+        candidate_models = []
+        for model_name in self.fallback_models:
+            if model_name and model_name not in candidate_models:
+                candidate_models.append(model_name)
 
-        try:
-            response = requests.post(
-                self.base_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
-            choices = data.get("choices") or []
-            message = choices[0].get("message", {}) if choices else {}
-            content = (message.get("content") or "").strip()
-            return content or None
-        except Exception:
-            return None
+        for model_name in candidate_models:
+            payload = {
+                "model": model_name,
+                "messages": [{"role": "system", "content": self.DEFAULT_SYSTEM_PROMPT}, *messages],
+                "temperature": 0.2,
+                "max_tokens": 500,
+                "stream": False,
+            }
+
+            try:
+                response = requests.post(
+                    self.base_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=(8, self.timeout),
+                )
+                response.raise_for_status()
+                data = response.json()
+                choices = data.get("choices") or []
+                message = choices[0].get("message", {}) if choices else {}
+                content = self._extract_content(message.get("content"))
+                if content:
+                    self.last_error = ""
+                    return content
+                self.last_error = f"NVIDIA returned an empty response for model {model_name}."
+            except Exception as exc:
+                self.last_error = f"NVIDIA request failed for model {model_name}: {exc}"
+
+        return None
+
+    @staticmethod
+    def _extract_content(content):
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append((item.get("text") or "").strip())
+            return "\n".join(part for part in parts if part).strip()
+        return None
 
     def _scan_context(self, devices):
         if not devices:

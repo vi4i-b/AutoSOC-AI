@@ -10,36 +10,6 @@
   "conversation_summary": "User asked: necesen. Assistant answered: Hello. I am AutoSOC, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results. You can ask, for example: 'Why is port 445 risky?', 'What should I do after exposed RDP?', or 'Expl",
   "shared_lessons": [
     {
-      "question": "hello",
-      "answer": "Hello. I am AutoSOC, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results. You can ask, for example: 'Why is port 445 risky?', 'What should I do after exposed RDP?', or 'Expl",
-      "topic": "phishing"
-    },
-    {
-      "question": "Explain the current risk posture for an exposed SMB port 445 in two concise sentences.",
-      "answer": "SMB is exposed. Disable SMBv1, restrict it with the firewall, verify patching, and block internet exposure.  Technical note: LLM request failed: 400 Client Error: Bad Request for url: https://api.openai.com/v1/responses",
-      "topic": "port_445_smb"
-    },
-    {
-      "question": "Explain the current risk posture for an exposed SMB port 445 in two concise sentences.",
-      "answer": "SMB is exposed. Disable SMBv1, restrict it with the firewall, verify patching, and block internet exposure.  Technical note: LLM request failed: 429 Client Error: Too Many Requests for url: https://api.openai.com/v1/resp",
-      "topic": "port_445_smb"
-    },
-    {
-      "question": "why is port 445 risky?",
-      "answer": "SMB is exposed. Disable SMBv1, restrict it with the firewall, verify patching, and block internet exposure.",
-      "topic": "port_445_smb"
-    },
-    {
-      "question": "445 portu niyə təhlükəlidir?",
-      "answer": "SMB açıqdır. SMBv1-i söndür, firewall ilə məhdudlaşdır, patch-ləri yoxla və internetdən girişi bağla.",
-      "topic": "port_445_smb"
-    },
-    {
-      "question": "Fişinqdən necə qorunum?",
-      "answer": "Fişinqdən qorunmaq üçün MFA aktiv et, göndərənin domenini yoxla, şübhəli link və əlavələri açma, email filtrasiya tətbiq et və istifadəçiləri maarifləndir.",
-      "topic": "phishing"
-    },
-    {
       "question": "RDP açıqdırsa nə etməliyəm?",
       "answer": "I understand this is a security question. Narrow it down or connect it to the last scan: phishing, open port, hardening, malware, brute-force, or incident response.",
       "topic": "phishing"
@@ -68,7 +38,37 @@
       "question": "necesen",
       "answer": "Hello. I am AutoSOC, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results. You can ask, for example: 'Why is port 445 risky?', 'What should I do after exposed RDP?', or 'Expl",
       "topic": "phishing"
+    },
+    {
+      "question": "necesen",
+      "answer": "Hello. I am AutoSOC, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results. You can ask, for example: 'Why is port 445 risky?', 'What should I do after exposed RDP?', or 'Expl",
+      "topic": "phishing"
+    },
+    {
+      "question": "привет",
+      "answer": "Привет. Я AutoSOC, помощник по кибербезопасности. Помогаю разбирать угрозы, порты, hardening и результаты сканирования. Можно спросить, например: «Почему опасен 445 порт?», «Что делать после обнаружения RDP?» или «Разбер",
+      "topic": "phishing"
+    },
+    {
+      "question": "сколько 1+1",
+      "answer": "I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, open ports, or network defense.",
+      "topic": "phishing"
+    },
+    {
+      "question": "салам",
+      "answer": "I answer cybersecurity topics. Ask about phishing, brute-force, malware, hardening, open ports, or network defense.",
+      "topic": "phishing"
+    },
+    {
+      "question": "что ты умеешь",
+      "answer": "I analyze open-port risk, remember the current topic, use the last scan, and explain next steps for hardening, phishing, brute-force, and malware defense.",
+      "topic": "phishing"
+    },
+    {
+      "question": "necesen",
+      "answer": "Hello. I am AutoSOC, your cybersecurity assistant. I can explain threats, open ports, hardening steps, and scan results. You can ask, for example: 'Why is port 445 risky?', 'What should I do after exposed RDP?', or 'Expl",
+      "topic": "phishing"
     }
   ],
-  "last_updated": "25.04.2026 19:44:09"
+  "last_updated": "25.04.2026 23:11:44"
 }

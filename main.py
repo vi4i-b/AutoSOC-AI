@@ -1784,6 +1784,8 @@ class AutoSOCApp(ctk.CTk):
         history = self._build_nvidia_chat_history()[:-1]
         answer = self.nvidia_ai.answer_security_question(question, self.last_scan_data, history=history)
         if not answer:
+            if self.nvidia_ai.last_error:
+                self._append_result(f"[NVIDIA AI FALLBACK] {self.nvidia_ai.last_error}\n", "muted")
             answer = self.ai_expert.answer_question(question, self.last_scan_data)
         self._ui(lambda: self._finish_ai_request(answer))
 
@@ -1878,7 +1880,11 @@ class AutoSOCApp(ctk.CTk):
 
             findings = self._collect_risks(data)
             risk_score = self.analyzer.calculate_risk_score(findings)
-            self.scan_summary = self.nvidia_ai.analyze_ports(target, data) or self.ai_expert.summarize_scan(data, "ru")
+            self.scan_summary = self.nvidia_ai.analyze_ports(target, data)
+            if not self.scan_summary:
+                if self.nvidia_ai.last_error:
+                    self._append_result(f"[NVIDIA AI FALLBACK] {self.nvidia_ai.last_error}\n", "muted")
+                self.scan_summary = self.ai_expert.summarize_scan(data, "ru")
             self.last_scan_data = data
             self._set_scan_summary_text(self.scan_summary)
             self._ui(self._refresh_dashboard_metrics)

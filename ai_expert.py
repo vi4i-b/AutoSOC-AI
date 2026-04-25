@@ -113,7 +113,11 @@ class AISecurityExpert:
         if provider == "openai":
             return "openai" if self.api_key else None
         if provider == "ollama":
-            return "ollama" if self._is_ollama_available() else None
+            if self._is_ollama_available():
+                return "ollama"
+            if self.api_key:
+                return "openai"
+            return None
         if provider == "auto":
             if self.api_key:
                 return "openai"
