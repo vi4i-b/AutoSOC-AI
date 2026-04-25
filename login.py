@@ -228,6 +228,7 @@ class LoginWindow(ctk.CTk):
         self.login_logo_image = None
         self.splash = None
         self._splash_after_id = None
+        self._ui_drain_after_id = None
         self._closing = False
         self.ui_queue = queue.Queue()
         load_env_file()
@@ -249,7 +250,7 @@ class LoginWindow(ctk.CTk):
 
         self.withdraw()
         self._show_splash()
-        self.after(120, self._drain_ui_queue)
+        self._ui_drain_after_id = self.after(120, self._drain_ui_queue)
         if self.telegram_client.enabled:
             self._start_telegram_listener()
 
@@ -344,7 +345,7 @@ class LoginWindow(ctk.CTk):
 
         try:
             if not self._closing and self.winfo_exists():
-                self.after(120, self._drain_ui_queue)
+                self._ui_drain_after_id = self.after(120, self._drain_ui_queue)
         except tk.TclError:
             pass
 
@@ -370,6 +371,12 @@ class LoginWindow(ctk.CTk):
             except tk.TclError:
                 pass
             self._splash_after_id = None
+        if self._ui_drain_after_id is not None:
+            try:
+                self.after_cancel(self._ui_drain_after_id)
+            except tk.TclError:
+                pass
+            self._ui_drain_after_id = None
         if self.splash is not None:
             try:
                 self.splash.safe_close()
