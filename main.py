@@ -20,7 +20,8 @@ from canary import PortCanary
 from database import SOCDatabase
 from guard import NetworkGuard
 from log_listener import WindowsLogListener
-from runtime_support import TelegramBotClient, apply_window_icon, load_env_file
+from nvidia_ai import NvidiaSecurityAI
+from runtime_support import TelegramBotClient, apply_window_icon, load_env_file, resource_path
 from scanner import NetworkScanner
 from validators import is_safe_scan_target, looks_like_chat_id
 
@@ -67,12 +68,16 @@ class AutoSOCApp(ctk.CTk):
         self.bot_identity = None
 
         self.ai_expert = AISecurityExpert()
+        self.nvidia_ai = NvidiaSecurityAI()
         self.analyzer = RiskAnalyzer()
         self.guard = NetworkGuard(self.on_threat_detected)
         self.port_canary = PortCanary(self.on_canary_trip)
         self.last_scan_data = []
         self.scan_summary = ""
         self.ai_chat_window = None
+        self.ai_bubble_hint = None
+        self.ai_badge = None
+        self.ai_fab_icon = None
         self.ai_loader_job = None
         self.ai_loader_step = 0
         self.ai_fab_animation_tick = 0
@@ -687,7 +692,7 @@ class AutoSOCApp(ctk.CTk):
 
         ctk.CTkLabel(
             header,
-            text="Security Copilot",
+            text="Security Copilot (NVIDIA)",
             text_color="#f4f8fc",
             font=ctk.CTkFont(size=16, weight="bold"),
         ).grid(row=0, column=0, sticky="w")
@@ -740,22 +745,54 @@ class AutoSOCApp(ctk.CTk):
         self.assistant_button.grid(row=0, column=1, sticky="e")
 
     def _build_fab(self):
+        icon_path = resource_path("assets", "app_icon.png")
+        try:
+            base_icon = tk.PhotoImage(file=icon_path)
+            self.ai_fab_icon = base_icon.subsample(10, 10)
+        except tk.TclError:
+            self.ai_fab_icon = None
+
         self.ai_fab = ctk.CTkButton(
             self,
-            text="Chat",
-            width=82,
-            height=82,
-            corner_radius=41,
-            fg_color="#77beff",
-            hover_color="#a1d1ff",
-            text_color="#04131f",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            border_width=3,
-            border_color="#d9ecff",
-            command=self.open_ai_chat_window,
+            text="",
+            image=self.ai_fab_icon,
+            width=54,
+            height=54,
+            corner_radius=27,
+            fg_color="#0f1d2c",
+            hover_color="#17304b",
+            border_width=1,
+            border_color="#294661",
+            border_spacing=0,
+            command=self.toggle_ai_chat_window,
         )
-        self.ai_fab.place(relx=1.0, rely=1.0, x=-34, y=-34, anchor="se")
-        self.after(80, self.animate_ai_fab)
+        self.ai_fab.place(relx=1.0, rely=1.0, x=-22, y=-20, anchor="se")
+
+        self.bind("<Configure>", lambda _event: self._position_ai_chat_window())
+
+    def _position_ai_chat_window(self):
+        if not (self.ai_chat_window and self.ai_chat_window.winfo_exists()):
+            return
+
+        self.update_idletasks()
+        root_x = self.winfo_rootx()
+        root_y = self.winfo_rooty()
+        width = self.winfo_width()
+        height = self.winfo_height()
+
+        panel_width = 430
+        panel_height = 620
+        pos_x = root_x + width - panel_width - 28
+        pos_y = root_y + height - panel_height - 108
+        self.ai_chat_window.geometry(f"{panel_width}x{panel_height}+{pos_x}+{pos_y}")
+
+    def _sync_ai_bubble_state(self):
+        chat_open = bool(self.ai_chat_window and self.ai_chat_window.winfo_exists() and self.ai_chat_window.state() != "withdrawn")
+        if hasattr(self, "ai_fab"):
+            if chat_open:
+                self.ai_fab.configure(fg_color="#1b3550", hover_color="#234364", border_color="#6fa8e2")
+            else:
+                self.ai_fab.configure(fg_color="#0f1d2c", hover_color="#17304b", border_color="#294661")
 
     def _metric_card(self, parent, column, label, value, accent):
         card = ctk.CTkFrame(parent, fg_color="#0b1623", corner_radius=20)
@@ -813,6 +850,13 @@ class AutoSOCApp(ctk.CTk):
             prefix = "You" if sender_name == "You" else "AutoSOC"
             self.assistant_output.insert("end", f"{prefix}\n{content}\n\n")
         self.assistant_output.see("end")
+
+    def _build_nvidia_chat_history(self):
+        history = []
+        for sender, text in self.chat_history[-10:]:
+            role = "user" if sender == "You" else "assistant"
+            history.append({"role": role, "content": text})
+        return history
 
     def _refresh_dashboard_metrics(self):
         total_devices = len(self.last_scan_data)
@@ -1038,7 +1082,10 @@ class AutoSOCApp(ctk.CTk):
     def send_telegram_alert(self, message_text):
         if not self.chat_id:
             return
-        ok, data = self.telegram_client.send_message(self.chat_id, message_text)
+        final_message = message_text
+        if self.scan_summary and "*AI advice:*" not in final_message:
+            final_message = f"{message_text}\n\n*AI advice:*\n{self.scan_summary}"
+        ok, data = self.telegram_client.send_message(self.chat_id, final_message)
         if not ok:
             self._ui(lambda: self.result_box.insert(
                 "0.0",
@@ -1466,48 +1513,70 @@ class AutoSOCApp(ctk.CTk):
         threading.Thread(target=self.send_telegram_alert, args=(alert_tg,), daemon=True).start()
 
     def animate_ai_fab(self):
-        if not hasattr(self, "ai_fab"):
+        return
+
+    def toggle_ai_chat_window(self):
+        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and self.ai_chat_window.state() != "withdrawn":
+            self.close_ai_chat_window()
             return
-        self.ai_fab_animation_tick += 1
-        y_offset = int(math.sin(self.ai_fab_animation_tick / 10) * 8)
-        self.ai_fab.place_configure(x=-34, y=-38 - y_offset)
-        palette = ["#77beff", "#8fc8ff", "#9bd0ff", "#8fc8ff"]
-        color = palette[(self.ai_fab_animation_tick // 8) % len(palette)]
-        self.ai_fab.configure(fg_color=color)
-        self.after(90, self.animate_ai_fab)
+        self.open_ai_chat_window()
 
     def open_ai_chat_window(self):
         if self.ai_chat_window and self.ai_chat_window.winfo_exists():
             self.ai_chat_window.deiconify()
             self.ai_chat_window.lift()
             self.ai_chat_window.focus()
+            self._position_ai_chat_window()
+            self._sync_ai_bubble_state()
             return
 
         self.ai_chat_window = ctk.CTkToplevel(self)
         self.ai_chat_window.title("AutoSOC Chat")
-        self.ai_chat_window.geometry("470x650")
+        self.ai_chat_window.geometry("430x620")
         self.ai_chat_window.configure(fg_color="#0a1522")
         self.ai_chat_window.attributes("-topmost", True)
         self.ai_chat_window.protocol("WM_DELETE_WINDOW", self.close_ai_chat_window)
+        self.ai_chat_window.resizable(False, False)
+        self._position_ai_chat_window()
+
+        popup_header = ctk.CTkFrame(self.ai_chat_window, fg_color="#0d1b2a", corner_radius=18)
+        popup_header.pack(fill="x", padx=14, pady=(14, 10))
+        popup_header.grid_columnconfigure(0, weight=1)
+
+        title_stack = ctk.CTkFrame(popup_header, fg_color="transparent")
+        title_stack.grid(row=0, column=0, sticky="w", padx=14, pady=12)
 
         ctk.CTkLabel(
-            self.ai_chat_window,
-            text="AutoSOC Chat",
+            title_stack,
+            text="AutoSOC AI Assistant",
             text_color="#f4f8fc",
-            font=ctk.CTkFont(size=20, weight="bold"),
-        ).pack(anchor="w", padx=18, pady=(18, 6))
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).pack(anchor="w")
 
         ctk.CTkLabel(
-            self.ai_chat_window,
-            text="Security copiloting with Azerbaijani context awareness and guided remediation",
+            title_stack,
+            text="Floating security copilot with NVIDIA-powered replies",
             text_color="#87a5c0",
             font=ctk.CTkFont(size=12),
-            wraplength=410,
+            wraplength=300,
             justify="left",
-        ).pack(anchor="w", padx=18, pady=(0, 10))
+        ).pack(anchor="w", pady=(3, 0))
 
-        popup_faq = ctk.CTkScrollableFrame(self.ai_chat_window, fg_color="#0d1b2a", corner_radius=16, height=110)
-        popup_faq.pack(fill="x", padx=18, pady=(0, 10))
+        ctk.CTkButton(
+            popup_header,
+            text="×",
+            width=38,
+            height=38,
+            corner_radius=19,
+            fg_color="#142433",
+            hover_color="#1d3348",
+            text_color="#dce8f2",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            command=self.close_ai_chat_window,
+        ).grid(row=0, column=1, sticky="e", padx=12, pady=12)
+
+        popup_faq = ctk.CTkScrollableFrame(self.ai_chat_window, fg_color="#0d1b2a", corner_radius=16, height=100)
+        popup_faq.pack(fill="x", padx=14, pady=(0, 10))
         for question in self.FAQ_ITEMS:
             ctk.CTkButton(
                 popup_faq,
@@ -1528,7 +1597,7 @@ class AutoSOCApp(ctk.CTk):
             text_color="#dce8f2",
             font=ctk.CTkFont(size=12),
         )
-        popup_chat.pack(fill="both", expand=True, padx=18, pady=(0, 10))
+        popup_chat.pack(fill="both", expand=True, padx=14, pady=(0, 10))
         popup_chat.insert("end", self.assistant_output.get("0.0", "end").strip())
         self.popup_chat_box = popup_chat
 
@@ -1538,10 +1607,10 @@ class AutoSOCApp(ctk.CTk):
             text_color="#8fbfff",
             font=ctk.CTkFont(size=11),
         )
-        self.popup_loader.pack(anchor="w", padx=18, pady=(0, 6))
+        self.popup_loader.pack(anchor="w", padx=16, pady=(0, 6))
 
         bottom = ctk.CTkFrame(self.ai_chat_window, fg_color="transparent")
-        bottom.pack(fill="x", padx=18, pady=(0, 18))
+        bottom.pack(fill="x", padx=14, pady=(0, 14))
         bottom.grid_columnconfigure(0, weight=1)
 
         self.popup_entry = ctk.CTkEntry(
@@ -1557,7 +1626,7 @@ class AutoSOCApp(ctk.CTk):
 
         self.popup_send = ctk.CTkButton(
             bottom,
-            text="Send",
+            text="Ask",
             width=90,
             height=42,
             corner_radius=14,
@@ -1566,10 +1635,12 @@ class AutoSOCApp(ctk.CTk):
             command=self.ask_ai_assistant,
         )
         self.popup_send.grid(row=0, column=1, sticky="e")
+        self._sync_ai_bubble_state()
 
     def close_ai_chat_window(self):
         if self.ai_chat_window and self.ai_chat_window.winfo_exists():
             self.ai_chat_window.withdraw()
+        self._sync_ai_bubble_state()
 
     def start_scan_thread(self):
         target = self.ip_entry.get().strip()
@@ -1677,7 +1748,10 @@ class AutoSOCApp(ctk.CTk):
         return None
 
     def _run_ai_request(self, question):
-        answer = self.ai_expert.answer_question(question, self.last_scan_data)
+        history = self._build_nvidia_chat_history()[:-1]
+        answer = self.nvidia_ai.answer_security_question(question, self.last_scan_data, history=history)
+        if not answer:
+            answer = self.ai_expert.answer_question(question, self.last_scan_data)
         self._ui(lambda: self._finish_ai_request(answer))
 
     def _finish_ai_request(self, answer):
@@ -1771,7 +1845,7 @@ class AutoSOCApp(ctk.CTk):
 
             findings = self._collect_risks(data)
             risk_score = self.analyzer.calculate_risk_score(findings)
-            self.scan_summary = self.ai_expert.summarize_scan(data, "az")
+            self.scan_summary = self.nvidia_ai.analyze_ports(target, data) or self.ai_expert.summarize_scan(data, "ru")
             self.last_scan_data = data
             self._set_scan_summary_text(self.scan_summary)
             self._ui(self._refresh_dashboard_metrics)
