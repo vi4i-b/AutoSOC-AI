@@ -36,7 +36,6 @@
 - управление портами
 - консоль сканирования
 - Telegram status
-- AI-помощник
 - canary и incident reaction
 - firewall-операции
 
@@ -210,6 +209,15 @@
 
 Файл:
 [`validators.py`](/C:/Users/user/PycharmProjects/AutoSOC/validators.py)
+
+### `ai_chat_window.py`
+
+Здесь находится AI chat. Кнопка расположена в правом нижнем углу:
+
+- AI-помощник
+
+Файл:
+[`ai_chat_window.py`](https://github.com/vi4i-b/AutoSOC-AI/blob/main/ai_chat_window.py)
 
 ## 11. Тесты
 
