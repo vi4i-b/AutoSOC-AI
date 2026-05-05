@@ -25,6 +25,8 @@ from runtime_support import TelegramBotClient, apply_window_icon, load_env_file,
 from scanner import NetworkScanner
 from validators import is_safe_scan_target, looks_like_chat_id
 
+from ai_chat_window import AIChatWindow # ai_chat_window
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
@@ -803,22 +805,6 @@ class AutoSOCApp(ctk.CTk):
 
         self.bind("<Configure>", lambda _event: self._position_ai_chat_window())
 
-    def _position_ai_chat_window(self):
-        if not (self.ai_chat_window and self.ai_chat_window.winfo_exists()):
-            return
-
-        self.update_idletasks()
-        root_x = self.winfo_rootx()
-        root_y = self.winfo_rooty()
-        width = self.winfo_width()
-        height = self.winfo_height()
-
-        panel_width = 430
-        panel_height = 620
-        pos_x = root_x + width - panel_width - 28
-        pos_y = root_y + height - panel_height - 108
-        self.ai_chat_window.geometry(f"{panel_width}x{panel_height}+{pos_x}+{pos_y}")
-
     def _sync_ai_bubble_state(self):
         chat_open = bool(self.ai_chat_window and self.ai_chat_window.winfo_exists() and self.ai_chat_window.state() != "withdrawn")
         if hasattr(self, "ai_fab"):
@@ -1555,120 +1541,23 @@ class AutoSOCApp(ctk.CTk):
         self.open_ai_chat_window()
 
     def open_ai_chat_window(self):
+        # open if exist
         if self.ai_chat_window and self.ai_chat_window.winfo_exists():
             self.ai_chat_window.deiconify()
             self.ai_chat_window.lift()
             self.ai_chat_window.focus()
-            self._position_ai_chat_window()
-            self._sync_ai_bubble_state()
             return
 
-        self.ai_chat_window = ctk.CTkToplevel(self)
-        self.ai_chat_window.title("AutoSOC Chat")
-        self.ai_chat_window.geometry("430x620")
-        self.ai_chat_window.configure(fg_color="#0a1522")
-        self.ai_chat_window.attributes("-topmost", True)
+        # new window
+        self.ai_chat_window = AIChatWindow(
+            master=self,
+            faq_items=self.FAQ_ITEMS,
+            on_ask_callback=self.ask_ai_assistant,
+            current_output=self.assistant_output.get("0.0", "end").strip()
+        )
+
+        # hide instead of deleting
         self.ai_chat_window.protocol("WM_DELETE_WINDOW", self.close_ai_chat_window)
-        self.ai_chat_window.resizable(False, False)
-        self._position_ai_chat_window()
-
-        popup_header = ctk.CTkFrame(self.ai_chat_window, fg_color="#0d1b2a", corner_radius=18)
-        popup_header.pack(fill="x", padx=14, pady=(14, 10))
-        popup_header.grid_columnconfigure(0, weight=1)
-
-        title_stack = ctk.CTkFrame(popup_header, fg_color="transparent")
-        title_stack.grid(row=0, column=0, sticky="w", padx=14, pady=12)
-
-        ctk.CTkLabel(
-            title_stack,
-            text="AutoSOC AI Assistant",
-            text_color="#f4f8fc",
-            font=ctk.CTkFont(size=18, weight="bold"),
-        ).pack(anchor="w")
-
-        ctk.CTkLabel(
-            title_stack,
-            text="Floating security copilot with NVIDIA-powered replies",
-            text_color="#87a5c0",
-            font=ctk.CTkFont(size=12),
-            wraplength=300,
-            justify="left",
-        ).pack(anchor="w", pady=(3, 0))
-
-        ctk.CTkButton(
-            popup_header,
-            text="×",
-            width=38,
-            height=38,
-            corner_radius=19,
-            fg_color="#142433",
-            hover_color="#1d3348",
-            text_color="#dce8f2",
-            font=ctk.CTkFont(size=18, weight="bold"),
-            command=self.close_ai_chat_window,
-        ).grid(row=0, column=1, sticky="e", padx=12, pady=12)
-
-        popup_faq = ctk.CTkScrollableFrame(self.ai_chat_window, fg_color="#0d1b2a", corner_radius=16, height=100)
-        popup_faq.pack(fill="x", padx=14, pady=(0, 10))
-        for question in self.FAQ_ITEMS:
-            ctk.CTkButton(
-                popup_faq,
-                text=question,
-                height=32,
-                corner_radius=10,
-                fg_color="#142433",
-                hover_color="#1d3348",
-                command=lambda q=question: self.ask_ai_assistant(q),
-            ).pack(fill="x", padx=6, pady=4)
-
-        popup_chat = ctk.CTkTextbox(
-            self.ai_chat_window,
-            fg_color="#08111b",
-            corner_radius=16,
-            border_width=1,
-            border_color="#1d3347",
-            text_color="#dce8f2",
-            font=ctk.CTkFont(size=12),
-        )
-        popup_chat.pack(fill="both", expand=True, padx=14, pady=(0, 10))
-        popup_chat.insert("end", self.assistant_output.get("0.0", "end").strip())
-        self.popup_chat_box = popup_chat
-
-        self.popup_loader = ctk.CTkLabel(
-            self.ai_chat_window,
-            text="",
-            text_color="#8fbfff",
-            font=ctk.CTkFont(size=11),
-        )
-        self.popup_loader.pack(anchor="w", padx=16, pady=(0, 6))
-
-        bottom = ctk.CTkFrame(self.ai_chat_window, fg_color="transparent")
-        bottom.pack(fill="x", padx=14, pady=(0, 14))
-        bottom.grid_columnconfigure(0, weight=1)
-
-        self.popup_entry = ctk.CTkEntry(
-            bottom,
-            height=42,
-            corner_radius=14,
-            placeholder_text="Ask about a port, a threat, or tell me to take action",
-            fg_color="#101b28",
-            border_color="#2c445b",
-        )
-        self.popup_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        self.popup_entry.bind("<Return>", lambda e: self.ask_ai_assistant())
-
-        self.popup_send = ctk.CTkButton(
-            bottom,
-            text="Ask",
-            width=90,
-            height=42,
-            corner_radius=14,
-            fg_color="#2b7fff",
-            hover_color="#1f62ca",
-            command=self.ask_ai_assistant,
-        )
-        self.popup_send.grid(row=0, column=1, sticky="e")
-        self._sync_ai_bubble_state()
 
     def close_ai_chat_window(self):
         if self.ai_chat_window and self.ai_chat_window.winfo_exists():
