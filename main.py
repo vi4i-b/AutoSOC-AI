@@ -130,6 +130,8 @@ class AutoSOCApp(ctk.CTk):
 
         self._build_sidebar()
         self._build_main_panel()
+        self._build_new_tab_panel()
+        self._show_page("dashboard")
         self._build_fab()
         self._render_intro_message()
         self._refresh_dashboard_metrics()
@@ -564,14 +566,101 @@ class AutoSOCApp(ctk.CTk):
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
 
+    def _show_page(self, page):
+        if not hasattr(self, "main_frame") or not hasattr(self, "new_tab_frame"):
+            return
+
+        if page == "new_tab":
+            self.main_frame.grid_remove()
+            self.new_tab_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 0), pady=0)
+            self._set_section_nav_state("new_tab")
+            return
+
+        self.new_tab_frame.grid_remove()
+        self.main_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 0), pady=0)
+        self._set_section_nav_state("dashboard")
+
+    def _build_section_nav(self, parent):
+        nav = ctk.CTkFrame(parent, fg_color="#0c1724", corner_radius=14)
+        nav.grid(row=0, column=0, sticky="ew", padx=26, pady=(18, 10))
+        nav.grid_columnconfigure(2, weight=1)
+
+        ctk.CTkLabel(
+            nav,
+            text="Section",
+            text_color="#85a3bd",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=(14, 10), pady=10)
+
+        dashboard_btn = ctk.CTkButton(
+            nav,
+            text="Dashboard",
+            width=138,
+            height=34,
+            corner_radius=10,
+            fg_color="transparent",
+            hover_color="#172433",
+            border_width=1,
+            border_color="#263d55",
+            text_color="#9fb4c8",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=lambda: self._show_page("dashboard"),
+        )
+        dashboard_btn.grid(row=0, column=1, sticky="w", padx=(0, 8), pady=10)
+
+        phishing_btn = ctk.CTkButton(
+            nav,
+            text="Anti-Phishing Analysis",
+            width=210,
+            height=34,
+            corner_radius=10,
+            fg_color="transparent",
+            hover_color="#172433",
+            border_width=1,
+            border_color="#263d55",
+            text_color="#9fb4c8",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=lambda: self._show_page("new_tab"),
+        )
+        phishing_btn.grid(row=0, column=2, sticky="w", pady=10)
+
+        return dashboard_btn, phishing_btn
+
+    def _set_section_nav_state(self, active_page):
+        active = {
+            "fg_color": "#132842",
+            "hover_color": "#193958",
+            "border_width": 1,
+            "border_color": "#3d6ea1",
+            "text_color": "#dce8f2",
+        }
+        inactive = {
+            "fg_color": "transparent",
+            "hover_color": "#172433",
+            "border_width": 1,
+            "border_color": "#263d55",
+            "text_color": "#9fb4c8",
+        }
+
+        for button in getattr(self, "dashboard_nav_buttons", []):
+            button.configure(**(active if active_page == "dashboard" else inactive))
+        for button in getattr(self, "phishing_nav_buttons", []):
+            button.configure(**(active if active_page == "new_tab" else inactive))
+
     def _build_main_panel(self):
         self.main_frame = ctk.CTkFrame(self, fg_color="#07111b", corner_radius=0)
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 0), pady=0)
-        self.main_frame.grid_rowconfigure(2, weight=1)
+        self.main_frame.grid_rowconfigure(3, weight=1)
         self.main_frame.grid_columnconfigure(0, weight=1)
 
+        self.dashboard_nav_buttons = []
+        self.phishing_nav_buttons = []
+        dashboard_btn, phishing_btn = self._build_section_nav(self.main_frame)
+        self.dashboard_nav_buttons.append(dashboard_btn)
+        self.phishing_nav_buttons.append(phishing_btn)
+
         self.topbar = ctk.CTkFrame(self.main_frame, fg_color="#07111b", corner_radius=0)
-        self.topbar.grid(row=0, column=0, sticky="ew", padx=26, pady=(24, 14))
+        self.topbar.grid(row=1, column=0, sticky="ew", padx=26, pady=(0, 14))
         self.topbar.grid_columnconfigure(0, weight=1)
 
         title_block = ctk.CTkFrame(self.topbar, fg_color="transparent")
@@ -621,7 +710,7 @@ class AutoSOCApp(ctk.CTk):
         ).pack(side="left")
 
         metrics = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        metrics.grid(row=1, column=0, sticky="ew", padx=26, pady=(0, 14))
+        metrics.grid(row=2, column=0, sticky="ew", padx=26, pady=(0, 14))
         for idx in range(5):
             metrics.grid_columnconfigure(idx, weight=1)
 
@@ -632,7 +721,7 @@ class AutoSOCApp(ctk.CTk):
         self.metric_tg = self._metric_card(metrics, 4, "Telegram", "Offline", "#ff6b7a")
 
         content = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        content.grid(row=2, column=0, sticky="nsew", padx=26, pady=(0, 26))
+        content.grid(row=3, column=0, sticky="nsew", padx=26, pady=(0, 26))
         content.grid_columnconfigure(0, weight=7)
         content.grid_columnconfigure(1, weight=5)
         content.grid_rowconfigure(0, weight=1)
@@ -779,6 +868,231 @@ class AutoSOCApp(ctk.CTk):
         )
         self.assistant_button.grid(row=0, column=1, sticky="e")
 
+    def _build_new_tab_panel(self):
+        self.new_tab_frame = ctk.CTkFrame(self, fg_color="#07111b", corner_radius=0)
+        self.new_tab_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 0), pady=0)
+        self.new_tab_frame.grid_columnconfigure(0, weight=1)
+        self.new_tab_frame.grid_rowconfigure(2, weight=1)
+
+        dashboard_btn, phishing_btn = self._build_section_nav(self.new_tab_frame)
+        self.dashboard_nav_buttons.append(dashboard_btn)
+        self.phishing_nav_buttons.append(phishing_btn)
+
+        header = ctk.CTkFrame(self.new_tab_frame, fg_color="transparent")
+        header.grid(row=1, column=0, sticky="ew", padx=26, pady=(0, 14))
+
+        ctk.CTkLabel(
+            header,
+            text="Anti-Phishing Analysis",
+            font=ctk.CTkFont(size=30, weight="bold"),
+            text_color="#f4f8fc",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            header,
+            text="Inspect suspicious URLs, preview site content, and review risk signals",
+            font=ctk.CTkFont(size=13),
+            text_color="#85a3bd",
+        ).pack(anchor="w", pady=(4, 0))
+
+        body = ctk.CTkFrame(self.new_tab_frame, fg_color="#0b1623", corner_radius=22)
+        body.grid(row=2, column=0, sticky="nsew", padx=26, pady=(0, 26))
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(1, weight=6)
+        body.grid_rowconfigure(2, weight=3)
+
+        url_bar = ctk.CTkFrame(body, fg_color="transparent")
+        url_bar.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 12))
+        url_bar.grid_columnconfigure(0, weight=1)
+
+        self.phishing_url_entry = ctk.CTkEntry(
+            url_bar,
+            height=46,
+            corner_radius=14,
+            placeholder_text="https://example.com",
+            fg_color="#08111b",
+            border_color="#2c445b",
+            text_color="#f4f8fc",
+            font=ctk.CTkFont(size=14),
+        )
+        self.phishing_url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        self.phishing_url_entry.insert(0, "https://hi.com")
+
+        self.btn_phishing_analyze = ctk.CTkButton(
+            url_bar,
+            text="Analyze",
+            width=138,
+            height=46,
+            corner_radius=14,
+            fg_color="#2b7fff",
+            hover_color="#1f62ca",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        self.btn_phishing_analyze.grid(row=0, column=1, sticky="e", padx=(0, 10))
+
+        self.btn_phishing_ai = ctk.CTkButton(
+            url_bar,
+            text="AI",
+            width=56,
+            height=46,
+            corner_radius=14,
+            fg_color="#112033",
+            hover_color="#19324d",
+            border_width=1,
+            border_color="#315274",
+            text_color="#77beff",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        self.btn_phishing_ai.grid(row=0, column=2, sticky="e")
+
+        browser_card = ctk.CTkFrame(body, fg_color="#0d1b2a", corner_radius=18)
+        browser_card.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 12))
+        browser_card.grid_columnconfigure(0, weight=1)
+        browser_card.grid_rowconfigure(1, weight=1)
+
+        browser_header = ctk.CTkFrame(browser_card, fg_color="transparent")
+        browser_header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        browser_header.grid_columnconfigure(1, weight=1)
+
+        dot_row = ctk.CTkFrame(browser_header, fg_color="transparent")
+        dot_row.grid(row=0, column=0, sticky="w")
+        for color in ("#ff6b7a", "#ffd36b", "#5dd39e"):
+            ctk.CTkLabel(
+                dot_row,
+                text="●",
+                text_color=color,
+                font=ctk.CTkFont(size=13),
+            ).pack(side="left", padx=(0, 5))
+
+        ctk.CTkLabel(
+            browser_header,
+            text="Preview sandbox",
+            text_color="#85a3bd",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=0, column=1, sticky="w", padx=10)
+
+        ctk.CTkLabel(
+            browser_header,
+            text="Not connected",
+            text_color="#ffd36b",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=0, column=2, sticky="e")
+
+        preview = ctk.CTkFrame(browser_card, fg_color="#08111b", corner_radius=16, border_width=1, border_color="#1f3449")
+        preview.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        preview.grid_columnconfigure(0, weight=1)
+        preview.grid_rowconfigure(0, weight=1)
+
+        preview_stack = ctk.CTkFrame(preview, fg_color="transparent")
+        preview_stack.grid(row=0, column=0)
+
+        ctk.CTkLabel(
+            preview_stack,
+            text="Website preview",
+            text_color="#f4f8fc",
+            font=ctk.CTkFont(size=22, weight="bold"),
+        ).pack()
+        ctk.CTkLabel(
+            preview_stack,
+            text="The embedded browser surface will render the submitted URL here.",
+            text_color="#85a3bd",
+            font=ctk.CTkFont(size=13),
+        ).pack(pady=(8, 0))
+
+        analysis_card = ctk.CTkFrame(body, fg_color="#0d1b2a", corner_radius=18)
+        analysis_card.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        analysis_card.grid_columnconfigure(0, weight=3)
+        analysis_card.grid_columnconfigure(1, weight=2)
+        analysis_card.grid_rowconfigure(0, weight=1)
+
+        findings = ctk.CTkFrame(analysis_card, fg_color="#08111b", corner_radius=16, border_width=1, border_color="#1f3449")
+        findings.grid(row=0, column=0, sticky="nsew", padx=(16, 10), pady=16)
+        findings.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            findings,
+            text="Site Risk Analysis",
+            text_color="#f4f8fc",
+            font=ctk.CTkFont(size=17, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
+
+        signals = [
+            ("Domain reputation", "No known blocklist hits in the current design state.", "#5dd39e"),
+            ("Login form behavior", "Form collection points will be inspected after backend integration.", "#ffd36b"),
+            ("Certificate check", "TLS and issuer details will appear here.", "#77beff"),
+            ("Content indicators", "Brand impersonation, urgency language, and redirects will be scored.", "#ff9f6e"),
+        ]
+        for row, (label, detail, color) in enumerate(signals, start=1):
+            signal = ctk.CTkFrame(findings, fg_color="transparent")
+            signal.grid(row=row, column=0, sticky="ew", padx=16, pady=(0, 8))
+            ctk.CTkLabel(signal, text="●", text_color=color, font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 8))
+            text_stack = ctk.CTkFrame(signal, fg_color="transparent")
+            text_stack.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                text_stack,
+                text=label,
+                text_color="#dce8f2",
+                font=ctk.CTkFont(size=12, weight="bold"),
+            ).pack(anchor="w")
+            ctk.CTkLabel(
+                text_stack,
+                text=detail,
+                text_color="#85a3bd",
+                font=ctk.CTkFont(size=11),
+                wraplength=520,
+                justify="left",
+            ).pack(anchor="w")
+
+        score_card = ctk.CTkFrame(analysis_card, fg_color="#08111b", corner_radius=16, border_width=1, border_color="#1f3449")
+        score_card.grid(row=0, column=1, sticky="nsew", padx=(10, 16), pady=16)
+        score_card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            score_card,
+            text="Safety Score",
+            text_color="#f4f8fc",
+            font=ctk.CTkFont(size=17, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 4))
+
+        ctk.CTkLabel(
+            score_card,
+            text="64%",
+            text_color="#ffd36b",
+            font=ctk.CTkFont(size=48, weight="bold"),
+        ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 0))
+
+        ctk.CTkLabel(
+            score_card,
+            text="Moderate confidence",
+            text_color="#85a3bd",
+            font=ctk.CTkFont(size=12),
+        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 12))
+
+        score_bar = ctk.CTkProgressBar(
+            score_card,
+            height=14,
+            corner_radius=8,
+            fg_color="#142433",
+            progress_color="#ffd36b",
+        )
+        score_bar.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
+        score_bar.set(0.64)
+
+        ctk.CTkLabel(
+            score_card,
+            text="Verdict",
+            text_color="#dce8f2",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=4, column=0, sticky="w", padx=16, pady=(4, 4))
+
+        ctk.CTkLabel(
+            score_card,
+            text="The site is not marked dangerous yet, but several checks are pending. Treat the URL as suspicious until analysis completes.",
+            text_color="#9fb4c8",
+            font=ctk.CTkFont(size=12),
+            wraplength=300,
+            justify="left",
+        ).grid(row=5, column=0, sticky="nw", padx=16, pady=(0, 16))
+
     def _build_fab(self):
         icon_path = resource_path("assets", "app_icon.png")
         try:
@@ -812,6 +1126,23 @@ class AutoSOCApp(ctk.CTk):
                 self.ai_fab.configure(fg_color="#1b3550", hover_color="#234364", border_color="#6fa8e2")
             else:
                 self.ai_fab.configure(fg_color="#0f1d2c", hover_color="#17304b", border_color="#294661")
+
+    def _position_ai_chat_window(self):
+        if not self.ai_chat_window or not self.ai_chat_window.winfo_exists():
+            return
+        if self.ai_chat_window.state() == "withdrawn":
+            return
+
+        self.update_idletasks()
+        popup_w = self.ai_chat_window.winfo_width() or 430
+        popup_h = self.ai_chat_window.winfo_height() or 620
+        app_x = self.winfo_rootx()
+        app_y = self.winfo_rooty()
+        app_w = self.winfo_width()
+        app_h = self.winfo_height()
+        x = app_x + max(app_w - popup_w - 22, 0)
+        y = app_y + max(app_h - popup_h - 92, 0)
+        self.ai_chat_window.geometry(f"{popup_w}x{popup_h}+{x}+{y}")
 
     def _metric_card(self, parent, column, label, value, accent):
         card = ctk.CTkFrame(parent, fg_color="#0b1623", corner_radius=20)
@@ -1546,6 +1877,8 @@ class AutoSOCApp(ctk.CTk):
             self.ai_chat_window.deiconify()
             self.ai_chat_window.lift()
             self.ai_chat_window.focus()
+            self._position_ai_chat_window()
+            self._sync_ai_bubble_state()
             return
 
         # new window
@@ -1558,6 +1891,8 @@ class AutoSOCApp(ctk.CTk):
 
         # hide instead of deleting
         self.ai_chat_window.protocol("WM_DELETE_WINDOW", self.close_ai_chat_window)
+        self._position_ai_chat_window()
+        self._sync_ai_bubble_state()
 
     def close_ai_chat_window(self):
         if self.ai_chat_window and self.ai_chat_window.winfo_exists():
