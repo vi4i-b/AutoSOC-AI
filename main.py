@@ -22,7 +22,7 @@ from guard import NetworkGuard
 from log_listener import WindowsLogListener
 from nvidia_ai import NvidiaSecurityAI
 from runtime_support import TelegramBotClient, apply_window_icon, load_env_file, resource_path
-from scanner import NetworkScanner
+from scanner import NetworkScanner, apply_port_policy
 from validators import is_safe_scan_target, looks_like_chat_id
 
 ctk.set_appearance_mode("dark")
@@ -871,15 +871,10 @@ class AutoSOCApp(ctk.CTk):
 
     def _refresh_dashboard_metrics(self):
         total_devices = len(self.last_scan_data)
-        open_ports = self._count_live_open_ports()
-        findings = self._collect_risks(self.last_scan_data)
-        active_findings = []
-        for finding in findings:
-            switch = self.switches.get(finding["port"])
-            if switch and not switch.get():
-                continue
-            active_findings.append(finding)
-        risk_score = self.analyzer.calculate_risk_score(active_findings)
+        policy_data = self._policy_filtered_scan_data(self.last_scan_data)
+        open_ports = self._count_open_ports(policy_data)
+        findings = self._collect_risks(policy_data)
+        risk_score = self.analyzer.calculate_risk_score(findings)
 
         self.metric_total_devices.configure(text=str(total_devices))
         self.metric_open_ports.configure(text=str(open_ports))
@@ -895,17 +890,22 @@ class AutoSOCApp(ctk.CTk):
         else:
             self.metric_tg.configure(text="Offline", text_color="#ff7c85")
 
-    def _count_live_open_ports(self):
+    def _snapshot_port_policy(self):
+        return {
+            int(port): bool(switch.get())
+            for port, switch in self.switches.items()
+        }
+
+    def _policy_filtered_scan_data(self, data, port_policy=None):
+        return apply_port_policy(data or [], port_policy or self._snapshot_port_policy())
+
+    def _count_open_ports(self, data):
         open_count = 0
-        for device in self.last_scan_data or []:
+        for device in data or []:
             for port_info in device.get("ports", []):
                 try:
-                    port = int(port_info["port"])
+                    int(port_info["port"])
                 except (KeyError, TypeError, ValueError):
-                    continue
-
-                switch = self.switches.get(port)
-                if switch and not switch.get():
                     continue
                 open_count += 1
         return open_count
@@ -913,15 +913,7 @@ class AutoSOCApp(ctk.CTk):
     def _count_live_detected_risks(self):
         if not self.last_scan_data:
             return 0
-
-        risk_count = 0
-        for risk in self._collect_risks(self.last_scan_data):
-            port = risk["port"]
-            switch = self.switches.get(port)
-            if switch and not switch.get():
-                continue
-            risk_count += 1
-        return risk_count
+        return len(self._collect_risks(self._policy_filtered_scan_data(self.last_scan_data)))
 
     def _check_telegram_status(self):
         if not self.telegram_client.enabled:
@@ -1401,6 +1393,12 @@ class AutoSOCApp(ctk.CTk):
         is_open = bool(switch_obj.get())
         service = self.port_definitions.get(port, "Unknown")
         success, rule_name, firewall_message = self._set_port_firewall_rule(port, is_open)
+        if not success:
+            if is_open:
+                switch_obj.deselect()
+            else:
+                switch_obj.select()
+
         state_text = "ALLOWED" if is_open else "BLOCKED"
         result_state = state_text if success else f"{state_text} (with error)"
         self.result_box.insert(
@@ -1414,6 +1412,10 @@ class AutoSOCApp(ctk.CTk):
             "local_firewall",
             f"Port {port} ({service}) -> {state_text}. Rule: {rule_name or 'n/a'}. Result: {firewall_message}",
         )
+        if self.last_scan_data:
+            policy_data = self._policy_filtered_scan_data(self.last_scan_data)
+            self.scan_summary = self.ai_expert.summarize_scan(policy_data, "ru")
+            self._set_scan_summary_text(self.scan_summary)
         self._refresh_dashboard_metrics()
 
     def update_threshold(self, value):
@@ -1554,7 +1556,8 @@ class AutoSOCApp(ctk.CTk):
         self.assistant_summary.insert("end", "Scan in progress. Metrics will refresh as devices are processed.")
         self._refresh_dashboard_metrics()
         self.db.add_audit_event("scan_started", self.current_user.get("username", "local_operator"), f"Target: {target}")
-        threading.Thread(target=self.run_logic, args=(target,), daemon=True).start()
+        port_policy = self._snapshot_port_policy()
+        threading.Thread(target=self.run_logic, args=(target, port_policy), daemon=True).start()
 
     def ask_ai_assistant(self, preset_question=None):
         question = (preset_question or self._get_active_question() or "").strip()
@@ -1571,7 +1574,8 @@ class AutoSOCApp(ctk.CTk):
             return
 
         self.start_ai_loader()
-        threading.Thread(target=self._run_ai_request, args=(question,), daemon=True).start()
+        scan_context = self._policy_filtered_scan_data(self.last_scan_data)
+        threading.Thread(target=self._run_ai_request, args=(question, scan_context), daemon=True).start()
 
     def _get_active_question(self):
         return self.assistant_entry.get().strip()
@@ -1628,13 +1632,13 @@ class AutoSOCApp(ctk.CTk):
 
         return None
 
-    def _run_ai_request(self, question):
+    def _run_ai_request(self, question, scan_context):
         history = self._build_nvidia_chat_history()[:-1]
-        answer = self.nvidia_ai.answer_security_question(question, self.last_scan_data, history=history)
+        answer = self.nvidia_ai.answer_security_question(question, scan_context, history=history)
         if not answer:
             if self.nvidia_ai.last_error:
                 self._append_result(f"[NVIDIA AI FALLBACK] {self.nvidia_ai.last_error}\n", "muted")
-            answer = self.ai_expert.answer_question(question, self.last_scan_data)
+            answer = self.ai_expert.answer_question(question, scan_context)
         self._ui(lambda: self._finish_ai_request(answer))
 
     def _finish_ai_request(self, answer):
@@ -1661,10 +1665,11 @@ class AutoSOCApp(ctk.CTk):
             self.ai_loader_job = None
         self.assistant_loader.configure(text="")
 
-    def run_logic(self, target):
+    def run_logic(self, target, port_policy=None):
         try:
             scanner = NetworkScanner()
-            data = scanner.scan_network(target, ports=list(self.port_definitions.keys()))
+            raw_data = scanner.scan_network(target, ports=list(self.port_definitions.keys()))
+            data = apply_port_policy(raw_data, port_policy)
             processed_devices = []
 
             self._append_result(f">>> SCANNING TARGET: {target}\n", "ai")
@@ -1691,7 +1696,8 @@ class AutoSOCApp(ctk.CTk):
                         f"checked {port_summary.get('requested', len(self.port_definitions))}, "
                         f"open {port_summary.get('open', 0)}, "
                         f"closed {port_summary.get('closed', 0)}, "
-                        f"filtered {port_summary.get('filtered', 0)}\n"
+                        f"filtered {port_summary.get('filtered', 0)}, "
+                        f"isolated {port_summary.get('isolated', 0)}\n"
                     ),
                     "muted",
                 )
@@ -1704,14 +1710,18 @@ class AutoSOCApp(ctk.CTk):
                 else:
                     self._append_result("    No open tracked services detected\n", "success")
 
+                isolated_ports = device.get("isolated_ports", [])
+                if isolated_ports:
+                    isolated_view = ", ".join(
+                        f"{item['port']} ({self.port_definitions.get(int(item['port']), item.get('name', 'Unknown'))})"
+                        for item in isolated_ports
+                    )
+                    self._append_result(f"    Isolated by firewall policy: {isolated_view}\n", "ai")
+
                 risks = self.analyzer.analyze(open_ports)
                 for risk in risks:
                     port = risk["port"]
                     service = risk["info"]["service"]
-                    if port in self.switches and not self.switches[port].get():
-                        self._append_result(f"    Port {port}: already isolated by firewall\n", "ai")
-                        continue
-
                     total_risks += 1
                     severity = risk["info"]["risk"]
                     self._append_result(f"    Risk: Port {port} ({service}) [{severity}]\n", "danger")

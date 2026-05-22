@@ -1,6 +1,42 @@
 import nmap
 
 
+def apply_port_policy(scan_results, port_policy):
+    """Return scan results with policy-blocked open ports hidden from active exposure views."""
+    policy = {int(port): bool(allowed) for port, allowed in (port_policy or {}).items()}
+    filtered_results = []
+
+    for device in scan_results or []:
+        filtered_device = dict(device)
+        visible_ports = []
+        isolated_ports = []
+
+        for port_info in device.get("ports", []):
+            try:
+                port = int(port_info["port"])
+            except (KeyError, TypeError, ValueError):
+                visible_ports.append(dict(port_info))
+                continue
+
+            if policy.get(port, True):
+                visible_ports.append(dict(port_info))
+            else:
+                isolated_ports.append(dict(port_info))
+
+        summary = dict(device.get("port_scan_summary", {}))
+        raw_open = int(summary.get("open", len(device.get("ports", []))) or 0)
+        isolated_count = len(isolated_ports)
+        summary["open"] = max(raw_open - isolated_count, 0)
+        summary["isolated"] = isolated_count
+
+        filtered_device["ports"] = visible_ports
+        filtered_device["isolated_ports"] = isolated_ports
+        filtered_device["port_scan_summary"] = summary
+        filtered_results.append(filtered_device)
+
+    return filtered_results
+
+
 class NetworkScanner:
     DEFAULT_PORTS = [
         21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443,
