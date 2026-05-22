@@ -625,7 +625,7 @@ class AutoSOCApp(ctk.CTk):
         ).pack(side="left")
 
         metrics = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        metrics.grid(row=1, column=0, sticky="ew", padx=26, pady=(0, 14))
+        metrics.grid(row=1, column=0, sticky="ew", padx=26, pady=(0, 10))
         for idx in range(5):
             metrics.grid_columnconfigure(idx, weight=1)
 
@@ -784,21 +784,24 @@ class AutoSOCApp(ctk.CTk):
         self.assistant_button.grid(row=0, column=1, sticky="e")
 
     def _metric_card(self, parent, column, label, value, accent):
-        card = ctk.CTkFrame(parent, fg_color="#0b1623", corner_radius=20)
+        card = ctk.CTkFrame(parent, fg_color="#0b1623", corner_radius=16, height=58)
         card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0 if column == 4 else 8))
+        card.grid_propagate(False)
+        card.grid_rowconfigure(0, weight=1)
+        card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,
             text=label,
             text_color="#87a5c0",
             font=ctk.CTkFont(size=12),
-        ).pack(anchor="w", padx=16, pady=(14, 6))
+        ).grid(row=0, column=0, sticky="w", padx=(16, 8), pady=0)
         value_label = ctk.CTkLabel(
             card,
             text=value,
             text_color=accent,
-            font=ctk.CTkFont(size=26, weight="bold"),
+            font=ctk.CTkFont(size=22, weight="bold"),
         )
-        value_label.pack(anchor="w", padx=16, pady=(0, 14))
+        value_label.grid(row=0, column=1, sticky="e", padx=(8, 16), pady=0)
         return value_label
 
     def _build_faq_buttons(self, parent):
