@@ -141,6 +141,8 @@ class AutoSOCApp(ctk.CTk):
         if self.telegram_client.enabled:
             self.start_telegram_listener()
 
+        self.after(900, self._start_initial_scan)
+
     def _ui(self, callback):
         if threading.current_thread() is threading.main_thread():
             try:
@@ -186,6 +188,14 @@ class AutoSOCApp(ctk.CTk):
 
     def _set_status(self, text, color):
         self._ui(lambda: self.status_label.configure(text=text, text_color=color))
+
+    def _start_initial_scan(self):
+        try:
+            if not self.winfo_exists() or self.btn_scan.cget("state") == "disabled":
+                return
+            self.start_scan_thread(auto=True)
+        except tk.TclError:
+            pass
 
     def _build_sidebar(self):
         # width depends on the column
@@ -904,9 +914,19 @@ class AutoSOCApp(ctk.CTk):
             self.metric_tg.configure(text="Offline", text_color="#ff7c85")
 
     def _count_live_open_ports(self):
-        if self.switches:
-            return sum(1 for switch in self.switches.values() if switch.get())
-        return 0
+        open_count = 0
+        for device in self.last_scan_data or []:
+            for port_info in device.get("ports", []):
+                try:
+                    port = int(port_info["port"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+                switch = self.switches.get(port)
+                if switch and not switch.get():
+                    continue
+                open_count += 1
+        return open_count
 
     def _count_live_detected_risks(self):
         if not self.last_scan_data:
@@ -1564,7 +1584,7 @@ class AutoSOCApp(ctk.CTk):
             self.ai_chat_window.withdraw()
         self._sync_ai_bubble_state()
 
-    def start_scan_thread(self):
+    def start_scan_thread(self, auto=False):
         target = self.ip_entry.get().strip()
         if not target:
             messagebox.showwarning("Target Required", "Please enter an IP address or hostname.")
@@ -1579,6 +1599,8 @@ class AutoSOCApp(ctk.CTk):
         self.btn_scan.configure(state="disabled", text="Scanning...")
         self.status_label.configure(text="SCAN IN PROGRESS", text_color="#ffd36b")
         self.result_box.delete("0.0", "end")
+        if auto:
+            self._append_result("[SYSTEM] Automatic startup scan started.\n", "muted")
         self.assistant_summary.delete("0.0", "end")
         self.assistant_summary.insert("end", "Scan in progress. Metrics will refresh as devices are processed.")
         self._refresh_dashboard_metrics()
