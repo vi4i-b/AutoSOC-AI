@@ -637,12 +637,18 @@ class AutoSOCApp(ctk.CTk):
 
         content = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         content.grid(row=2, column=0, sticky="nsew", padx=26, pady=(0, 26))
-        content.grid_columnconfigure(0, weight=7)
-        content.grid_columnconfigure(1, weight=5)
-        content.grid_rowconfigure(0, weight=1)
+        content_split = tk.PanedWindow(
+            content,
+            orient=tk.HORIZONTAL,
+            bd=0,
+            bg="#07111b",
+            sashwidth=8,
+            sashrelief="flat",
+            opaqueresize=True,
+        )
+        content_split.pack(fill="both", expand=True)
 
-        left = ctk.CTkFrame(content, fg_color="#0b1623", corner_radius=22)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left = ctk.CTkFrame(content_split, fg_color="#0b1623", corner_radius=22)
         left.grid_rowconfigure(1, weight=1)
         left.grid_columnconfigure(0, weight=1)
 
@@ -681,10 +687,23 @@ class AutoSOCApp(ctk.CTk):
         self.result_box.tag_config("info", foreground="#ffd36b")
         self.result_box.tag_config("muted", foreground="#8ca3b8")
 
-        right = ctk.CTkFrame(content, fg_color="#0b1623", corner_radius=22)
-        right.grid(row=0, column=1, sticky="nsew")
+        right = ctk.CTkFrame(content_split, fg_color="#0b1623", corner_radius=22)
+        right.grid_rowconfigure(0, weight=1)
+        right.grid_rowconfigure(1, weight=0)
         right.grid_rowconfigure(2, weight=1)
         right.grid_columnconfigure(0, weight=1)
+        content_split.add(left, minsize=460)
+        content_split.add(right, minsize=420)
+
+        def place_initial_sashes():
+            try:
+                content_width = content_split.winfo_width()
+                if content_width > 1:
+                    content_split.sash_place(0, int(content_width * 0.48), 0)
+            except tk.TclError:
+                pass
+
+        self.after(200, place_initial_sashes)
 
         summary_card = ctk.CTkFrame(right, fg_color="#0d1b2a", corner_radius=18)
         summary_card.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 12))
