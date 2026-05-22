@@ -1,3 +1,4 @@
+import ipaddress
 import socket
 from collections import Counter
 from scapy.all import sniff, IP
@@ -42,8 +43,19 @@ class NetworkGuard:
 
     def _ai_mitigation(self, ip, count):
         reason = f"Həddindən artıq trafik: {count} paket/5san (Limit: {self.threshold})"
-        cmd = f'netsh advfirewall firewall add rule name="AutoSOC_Block_{ip}" dir=in action=block remoteip={ip}'
-        self.callback(ip, reason, cmd)
+
+        # check ip and normalize
+        try:
+            normalized_ip = str(ipaddress.ip_address(str(ip).strip()))
+        except ValueError:
+            return
+
+        # firewall command
+        cmd = (
+            "netsh advfirewall firewall add rule "
+            f'name="AutoSOC_Block_{normalized_ip}" dir=in action=block remoteip={normalized_ip}'
+        )
+        self.callback(normalized_ip, reason, cmd)
 
     def stop(self):
         self.is_monitoring = False

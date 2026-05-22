@@ -160,7 +160,11 @@ class RiskAnalyzer:
     def analyze(self, ports_list):
         findings = []
         for port_info in ports_list:
-            port_num = int(port_info["port"])
+            try:
+                port_num = int(port_info["port"])
+            except (KeyError, TypeError, ValueError):
+                continue # skip if bad port-entry
+
             if port_num in self.threats:
                 info = dict(self.threats[port_num])
                 findings.append(
