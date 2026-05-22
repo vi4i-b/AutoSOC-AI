@@ -25,8 +25,6 @@ from runtime_support import TelegramBotClient, apply_window_icon, load_env_file,
 from scanner import NetworkScanner
 from validators import is_safe_scan_target, looks_like_chat_id
 
-from ai_chat_window import AIChatWindow # ai_chat_window
-
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
@@ -76,13 +74,10 @@ class AutoSOCApp(ctk.CTk):
         self.port_canary = PortCanary(self.on_canary_trip)
         self.last_scan_data = []
         self.scan_summary = ""
-        self.ai_chat_window = None
         self.ai_bubble_hint = None
         self.ai_badge = None
-        self.ai_fab_icon = None
         self.ai_loader_job = None
         self.ai_loader_step = 0
-        self.ai_fab_animation_tick = 0
         self.chat_history = []
         self.incident_count = 0
         self.previous_scan_snapshot = self._load_exposure_baseline()
@@ -130,7 +125,6 @@ class AutoSOCApp(ctk.CTk):
 
         self._build_sidebar()
         self._build_main_panel()
-        self._build_fab()
         self._render_intro_message()
         self._refresh_dashboard_metrics()
         self._refresh_prevention_status()
@@ -788,40 +782,6 @@ class AutoSOCApp(ctk.CTk):
             command=self.ask_ai_assistant,
         )
         self.assistant_button.grid(row=0, column=1, sticky="e")
-
-    def _build_fab(self):
-        icon_path = resource_path("assets", "app_icon.png")
-        try:
-            base_icon = tk.PhotoImage(file=icon_path)
-            self.ai_fab_icon = base_icon.subsample(10, 10)
-        except tk.TclError:
-            self.ai_fab_icon = None
-
-        self.ai_fab = ctk.CTkButton(
-            self,
-            text="",
-            image=self.ai_fab_icon,
-            width=54,
-            height=54,
-            corner_radius=27,
-            fg_color="#0f1d2c",
-            hover_color="#17304b",
-            border_width=1,
-            border_color="#294661",
-            border_spacing=0,
-            command=self.toggle_ai_chat_window,
-        )
-        self.ai_fab.place(relx=1.0, rely=1.0, x=-22, y=-20, anchor="se")
-
-        self.bind("<Configure>", lambda _event: self._position_ai_chat_window())
-
-    def _sync_ai_bubble_state(self):
-        chat_open = bool(self.ai_chat_window and self.ai_chat_window.winfo_exists() and self.ai_chat_window.state() != "withdrawn")
-        if hasattr(self, "ai_fab"):
-            if chat_open:
-                self.ai_fab.configure(fg_color="#1b3550", hover_color="#234364", border_color="#6fa8e2")
-            else:
-                self.ai_fab.configure(fg_color="#0f1d2c", hover_color="#17304b", border_color="#294661")
 
     def _metric_card(self, parent, column, label, value, accent):
         card = ctk.CTkFrame(parent, fg_color="#0b1623", corner_radius=20)
@@ -1551,39 +1511,6 @@ class AutoSOCApp(ctk.CTk):
             alert_tg += f"\nDetails: {block_message}"
         threading.Thread(target=self.send_telegram_alert, args=(alert_tg,), daemon=True).start()
 
-    def animate_ai_fab(self):
-        return
-
-    def toggle_ai_chat_window(self):
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and self.ai_chat_window.state() != "withdrawn":
-            self.close_ai_chat_window()
-            return
-        self.open_ai_chat_window()
-
-    def open_ai_chat_window(self):
-        # open if exist
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists():
-            self.ai_chat_window.deiconify()
-            self.ai_chat_window.lift()
-            self.ai_chat_window.focus()
-            return
-
-        # new window
-        self.ai_chat_window = AIChatWindow(
-            master=self,
-            faq_items=self.FAQ_ITEMS,
-            on_ask_callback=self.ask_ai_assistant,
-            current_output=self.assistant_output.get("0.0", "end").strip()
-        )
-
-        # hide instead of deleting
-        self.ai_chat_window.protocol("WM_DELETE_WINDOW", self.close_ai_chat_window)
-
-    def close_ai_chat_window(self):
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists():
-            self.ai_chat_window.withdraw()
-        self._sync_ai_bubble_state()
-
     def start_scan_thread(self, auto=False):
         target = self.ip_entry.get().strip()
         if not target:
@@ -1625,28 +1552,16 @@ class AutoSOCApp(ctk.CTk):
         threading.Thread(target=self._run_ai_request, args=(question,), daemon=True).start()
 
     def _get_active_question(self):
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_entry"):
-            popup_text = self.popup_entry.get().strip()
-            if popup_text:
-                return popup_text
         return self.assistant_entry.get().strip()
 
     def _set_active_question(self, value):
         self.assistant_entry.delete(0, "end")
         if value:
             self.assistant_entry.insert(0, value)
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_entry"):
-            self.popup_entry.delete(0, "end")
-            if value:
-                self.popup_entry.insert(0, value)
 
     def _set_chat_controls_state(self, state):
         self.assistant_button.configure(state=state)
         self.assistant_entry.configure(state=state)
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_send"):
-            self.popup_send.configure(state=state)
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_entry"):
-            self.popup_entry.configure(state=state)
 
     def _handle_actionable_request(self, question):
         lowered = question.lower()
@@ -1705,9 +1620,6 @@ class AutoSOCApp(ctk.CTk):
         self._append_chat_message("AutoSOC", answer)
         self.assistant_summary.delete("0.0", "end")
         self.assistant_summary.insert("end", answer)
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_chat_box"):
-            self.popup_chat_box.delete("0.0", "end")
-            self.popup_chat_box.insert("end", self.assistant_output.get("0.0", "end").strip())
         self._set_chat_controls_state("normal")
 
     def start_ai_loader(self):
@@ -1718,8 +1630,6 @@ class AutoSOCApp(ctk.CTk):
         dots = "." * ((self.ai_loader_step % 3) + 1)
         loading_text = f"Analyzing{dots}"
         self.assistant_loader.configure(text=loading_text)
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_loader"):
-            self.popup_loader.configure(text=loading_text)
         self.ai_loader_step += 1
         self.ai_loader_job = self.after(350, self._tick_ai_loader)
 
@@ -1728,8 +1638,6 @@ class AutoSOCApp(ctk.CTk):
             self.after_cancel(self.ai_loader_job)
             self.ai_loader_job = None
         self.assistant_loader.configure(text="")
-        if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_loader"):
-            self.popup_loader.configure(text="")
 
     def run_logic(self, target):
         try:
