@@ -1,7 +1,8 @@
 import ipaddress
 import socket
 from collections import Counter
-from scapy.all import sniff, IP
+from scapy.layers.inet import IP
+from scapy.sendrecv import sniff
 import threading
 import time
 
