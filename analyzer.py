@@ -57,6 +57,13 @@ class RiskAnalyzer:
                 "desc": "Legacy mail protocols are often left with weak auth and poor encryption.",
                 "prevention": "Prefer IMAPS and restrict access by network zone.",
             },
+            135: {
+                "service": "RPC",
+                "risk": "High",
+                "category": "Windows remote procedure call",
+                "desc": "RPC endpoint exposure can aid service enumeration and remote management abuse.",
+                "prevention": "Restrict to trusted management hosts and block untrusted network access.",
+            },
             139: {
                 "service": "NetBIOS",
                 "risk": "High",

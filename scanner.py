@@ -1,6 +1,46 @@
 import nmap
 
 
+def count_open_ports(scan_results):
+    return sum(
+        1
+        for device in scan_results or []
+        for _port_info in device.get("ports", [])
+    )
+
+
+def summarize_single_port_state(scan_results, port):
+    target_port = int(port)
+
+    for device in scan_results or []:
+        for port_info in device.get("ports", []):
+            try:
+                if int(port_info["port"]) == target_port:
+                    return "open"
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        scanned_ports = set()
+        for item in device.get("scanned_ports", []):
+            try:
+                scanned_ports.add(int(item))
+            except (TypeError, ValueError):
+                continue
+
+        if target_port not in scanned_ports:
+            continue
+
+        summary = device.get("port_scan_summary", {})
+        if summary.get("filtered", 0):
+            return "filtered"
+        if summary.get("closed", 0):
+            return "closed"
+        if summary.get("other", 0):
+            return "other"
+
+    return "unknown"
+
+
 class NetworkScanner:
     DEFAULT_PORTS = [
         21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443,

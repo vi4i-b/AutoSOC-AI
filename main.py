@@ -1,3 +1,4 @@
+import ctypes
 import ipaddress
 import json
 import math
@@ -22,7 +23,7 @@ from guard import NetworkGuard
 from log_listener import WindowsLogListener
 from nvidia_ai import NvidiaSecurityAI
 from runtime_support import TelegramBotClient, apply_window_icon, load_env_file, resource_path
-from scanner import NetworkScanner
+from scanner import NetworkScanner, count_open_ports, summarize_single_port_state
 from validators import is_safe_scan_target, looks_like_chat_id
 
 from ai_chat_window import AIChatWindow # ai_chat_window
@@ -1212,13 +1213,7 @@ class AutoSOCApp(ctk.CTk):
         total_devices = len(self.last_scan_data)
         open_ports = self._count_live_open_ports()
         findings = self._collect_risks(self.last_scan_data)
-        active_findings = []
-        for finding in findings:
-            switch = self.switches.get(finding["port"])
-            if switch and not switch.get():
-                continue
-            active_findings.append(finding)
-        risk_score = self.analyzer.calculate_risk_score(active_findings)
+        risk_score = self.analyzer.calculate_risk_score(findings)
 
         self.metric_total_devices.configure(text=str(total_devices))
         self.metric_open_ports.configure(text=str(open_ports))
@@ -1235,22 +1230,13 @@ class AutoSOCApp(ctk.CTk):
             self.metric_tg.configure(text="Offline", text_color="#ff7c85")
 
     def _count_live_open_ports(self):
-        if self.switches:
-            return sum(1 for switch in self.switches.values() if switch.get())
-        return 0
+        return count_open_ports(self.last_scan_data)
 
     def _count_live_detected_risks(self):
         if not self.last_scan_data:
             return 0
 
-        risk_count = 0
-        for risk in self._collect_risks(self.last_scan_data):
-            port = risk["port"]
-            switch = self.switches.get(port)
-            if switch and not switch.get():
-                continue
-            risk_count += 1
-        return risk_count
+        return len(self._collect_risks(self.last_scan_data))
 
     def _check_telegram_status(self):
         if not self.telegram_client.enabled:
@@ -1365,7 +1351,7 @@ class AutoSOCApp(ctk.CTk):
         for port, switch in self.switches.items():
             if not switch.get():
                 switch.select()
-                self.toggle_port(port, switch)
+                self.toggle_port(port, switch, verify=False)
         self.result_box.insert("0.0", "[FIREWALL] All tracked ports allowed\n", "success")
         self._refresh_dashboard_metrics()
 
@@ -1373,7 +1359,7 @@ class AutoSOCApp(ctk.CTk):
         for port, switch in self.switches.items():
             if switch.get():
                 switch.deselect()
-                self.toggle_port(port, switch)
+                self.toggle_port(port, switch, verify=False)
         self.result_box.insert("0.0", "[FIREWALL] All tracked ports blocked\n", "danger")
         self._refresh_dashboard_metrics()
 
@@ -1726,10 +1712,26 @@ class AutoSOCApp(ctk.CTk):
         for row in self.db.get_recent_security_events():
             txt.insert("end", f"{row[0]} | {row[1]} | {row[2]} | {row[3]} | {row[4]}\n")
 
-    def toggle_port(self, port, switch_obj):
+    def toggle_port(self, port, switch_obj, verify=True):
         is_open = bool(switch_obj.get())
         service = self.port_definitions.get(port, "Unknown")
+        if not self._is_running_as_admin():
+            self.result_box.insert(
+                "0.0",
+                (
+                    "[ADMIN] AutoSOC is not running as administrator. "
+                    "Firewall and service hardening commands may fail or only partially apply.\n"
+                ),
+                "danger",
+            )
+
         success, rule_name, firewall_message = self._set_port_firewall_rule(port, is_open)
+        if not success:
+            if is_open:
+                switch_obj.deselect()
+            else:
+                switch_obj.select()
+
         state_text = "ALLOWED" if is_open else "BLOCKED"
         result_state = state_text if success else f"{state_text} (with error)"
         self.result_box.insert(
@@ -1743,7 +1745,171 @@ class AutoSOCApp(ctk.CTk):
             "local_firewall",
             f"Port {port} ({service}) -> {state_text}. Rule: {rule_name or 'n/a'}. Result: {firewall_message}",
         )
+        if success and verify:
+            target = self.ip_entry.get().strip()
+            if self._target_appears_remote(target):
+                self.result_box.insert(
+                    "0.0",
+                    (
+                        f"[VERIFY] Port Control changed this Windows host only. "
+                        f"Target {target} appears remote, so its port {port} will not close from this app.\n"
+                    ),
+                    "danger",
+                )
+            if target and is_safe_scan_target(target):
+                threading.Thread(
+                    target=self._verify_port_state_after_firewall_change,
+                    args=(target, port, service, is_open),
+                    daemon=True,
+                ).start()
         self._refresh_dashboard_metrics()
+
+    def _target_appears_remote(self, target):
+        target = (target or "").strip()
+        if not target or "/" in target:
+            return False
+
+        local_ips = self._local_ip_addresses()
+        try:
+            target_ip = ipaddress.ip_address(target)
+            return not target_ip.is_loopback and str(target_ip) not in local_ips
+        except ValueError:
+            pass
+
+        if target.lower() in {"localhost", socket.gethostname().lower()}:
+            return False
+
+        try:
+            resolved_ips = {
+                item[4][0]
+                for item in socket.getaddrinfo(target, None)
+            }
+        except OSError:
+            return False
+
+        return bool(resolved_ips) and not any(ip in local_ips for ip in resolved_ips)
+
+    def _local_ip_addresses(self):
+        addresses = {"127.0.0.1", "::1"}
+        try:
+            for item in socket.getaddrinfo(socket.gethostname(), None):
+                addresses.add(item[4][0])
+        except OSError:
+            pass
+        try:
+            host_ips = socket.gethostbyname_ex(socket.gethostname())[2]
+            addresses.update(host_ips)
+        except OSError:
+            pass
+        ipconfig_result = self._run_system_command(["ipconfig"])
+        for line in (getattr(ipconfig_result, "stdout", "") or "").splitlines():
+            if "IPv4" not in line or ":" not in line:
+                continue
+            candidate = line.split(":", 1)[1].strip().split("(", 1)[0].strip()
+            try:
+                addresses.add(str(ipaddress.ip_address(candidate)))
+            except ValueError:
+                continue
+        return addresses
+
+    def _verify_port_state_after_firewall_change(self, target, port, service, allowed):
+        self._append_result(f"[VERIFY] Raw scan check for {target}:{port} started\n", "muted", "0.0")
+        scanner = NetworkScanner()
+        data = scanner.scan_network(target, ports=[port])
+        state = summarize_single_port_state(data, port)
+
+        if allowed:
+            message = f"[VERIFY] Port {port} ({service}) raw scan state after allow: {state.upper()}\n"
+            tag = "info" if state == "open" else "muted"
+        elif state == "open":
+            message = (
+                f"[VERIFY] Port {port} ({service}) still scans OPEN. "
+                "The listener is still active, or this local scan is not proving inbound firewall blocking.\n"
+            )
+            tag = "danger"
+            if not self._target_appears_remote(target):
+                hardening_message = self._attempt_service_level_port_close(port, service)
+                if hardening_message:
+                    message += hardening_message
+                    data_after_hardening = scanner.scan_network(target, ports=[port])
+                    hardened_state = summarize_single_port_state(data_after_hardening, port)
+                    message += f"[VERIFY] Port {port} ({service}) raw scan after service hardening: {hardened_state.upper()}\n"
+                    if hardened_state in {"closed", "filtered"}:
+                        tag = "success"
+                else:
+                    message += "Confirm the firewall result from another machine on the network.\n"
+            else:
+                message += "Confirm the firewall result from another machine on the network.\n"
+        elif state in {"closed", "filtered"}:
+            message = f"[VERIFY] Port {port} ({service}) raw scan state after block: {state.upper()}\n"
+            tag = "success"
+        else:
+            message = f"[VERIFY] Port {port} ({service}) raw scan state after block is unclear: {state.upper()}\n"
+            tag = "muted"
+
+        self._append_result(message, tag, "0.0")
+
+    def _is_running_as_admin(self):
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    def _attempt_service_level_port_close(self, port, service):
+        port = int(port)
+        if port == 445:
+            actions = [
+                (
+                    "Disable File and Printer Sharing firewall group",
+                    [
+                        "advfirewall",
+                        "firewall",
+                        "set",
+                        "rule",
+                        "group=File and Printer Sharing",
+                        "new",
+                        "enable=No",
+                    ],
+                ),
+            ]
+            messages = [f"[HARDEN] Port {port} ({service}) requires SMB service-level hardening.\n"]
+            for label, arguments in actions:
+                result = self._run_netsh(arguments)
+                messages.append(f"[HARDEN] {label}: {self._format_command_result(result)}\n")
+
+            stop_result = self._run_system_command(["sc", "stop", "LanmanServer"])
+            messages.append(f"[HARDEN] Stop Windows Server service (LanmanServer): {self._format_command_result(stop_result)}\n")
+            return "".join(messages)
+
+        if port == 139:
+            messages = [f"[HARDEN] Port {port} ({service}) requires NetBIOS over TCP/IP hardening.\n"]
+            firewall_result = self._run_netsh(
+                [
+                    "advfirewall",
+                    "firewall",
+                    "set",
+                    "rule",
+                    "group=File and Printer Sharing",
+                    "new",
+                    "enable=No",
+                ]
+            )
+            messages.append(f"[HARDEN] Disable File and Printer Sharing firewall group: {self._format_command_result(firewall_result)}\n")
+
+            netbios_result = self._run_system_command(
+                ["wmic", "nicconfig", "where", "IPEnabled=true", "call", "SetTcpipNetbios", "2"]
+            )
+            messages.append(f"[HARDEN] Disable NetBIOS over TCP/IP on active adapters: {self._format_command_result(netbios_result)}\n")
+            return "".join(messages)
+
+        if port == 135:
+            return (
+                f"[HARDEN] Port {port} ({service}) is Windows RPC Endpoint Mapper. "
+                "AutoSOC keeps the firewall block, but does not stop RPC because that can break core Windows management. "
+                "Verify exposure from another host and restrict the network profile/segment.\n"
+            )
+
+        return ""
 
     def update_threshold(self, value):
         self.guard.threshold = int(value)
@@ -1760,10 +1926,13 @@ class AutoSOCApp(ctk.CTk):
             self.status_label.configure(text="SYSTEM READY", text_color="#6bf0a7")
 
     def _run_netsh(self, arguments):
+        return self._run_system_command(["netsh", *arguments])
+
+    def _run_system_command(self, command):
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             return subprocess.run(
-                ["netsh", *arguments],
+                command,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -1778,31 +1947,57 @@ class AutoSOCApp(ctk.CTk):
 
             return _NetshErrorResult(exc)
 
-    def _set_port_firewall_rule(self, port, allow_traffic):
-        rule_name = f"AutoSOC_Manual_{int(port)}"
-        action = "allow" if allow_traffic else "block"
-        self._run_netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule_name}"])
-        result = self._run_netsh(
-            [
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                f"name={rule_name}",
-                "dir=in",
-                f"action={action}",
-                "protocol=TCP",
-                f"localport={int(port)}",
-            ]
-        )
+    def _format_command_result(self, result):
         combined_output = " ".join(
             part.strip()
             for part in (getattr(result, "stdout", ""), getattr(result, "stderr", ""))
             if part and part.strip()
         )
-        if result.returncode == 0:
+        if combined_output:
+            return combined_output
+        if getattr(result, "returncode", 1) == 0:
+            return "Ok."
+        return f"command exited with code {getattr(result, 'returncode', 'unknown')}."
+
+    def _set_port_firewall_rule(self, port, allow_traffic):
+        rule_name = f"AutoSOC_Manual_{int(port)}"
+        delete_result = self._run_netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule_name}"])
+        if allow_traffic:
+            combined_output = " ".join(
+                part.strip()
+                for part in (getattr(delete_result, "stdout", ""), getattr(delete_result, "stderr", ""))
+                if part and part.strip()
+            )
+            lowered_output = combined_output.lower()
+            access_error_markers = ["access is denied", "requires elevation", "permission", "отказано"]
+            if delete_result.returncode != 0 and any(marker in lowered_output for marker in access_error_markers):
+                return False, rule_name, combined_output or f"netsh exited with code {delete_result.returncode}."
+            return True, rule_name, combined_output or "AutoSOC block rule removed. No broad allow rule was created."
+
+        results = []
+        for protocol in ("TCP", "UDP"):
+            results.append(
+                self._run_netsh(
+                    [
+                        "advfirewall",
+                        "firewall",
+                        "add",
+                        "rule",
+                        f"name={rule_name}",
+                        "dir=in",
+                        "action=block",
+                        f"protocol={protocol}",
+                        f"localport={int(port)}",
+                        "profile=any",
+                        "interfacetype=any",
+                    ]
+                )
+            )
+
+        combined_output = " ".join(self._format_command_result(result) for result in results)
+        if all(result.returncode == 0 for result in results):
             return True, rule_name, combined_output or "Firewall rule updated successfully."
-        return False, rule_name, combined_output or f"netsh exited with code {result.returncode}."
+        return False, rule_name, combined_output or "One or more netsh rules failed."
 
     def _block_ip_in_firewall(self, ip, rule_prefix="AutoSOC_Guard_Block"):
         try:
@@ -2092,8 +2287,10 @@ class AutoSOCApp(ctk.CTk):
                     port = risk["port"]
                     service = risk["info"]["service"]
                     if port in self.switches and not self.switches[port].get():
-                        self._append_result(f"    Port {port}: already isolated by firewall\n", "ai")
-                        continue
+                        self._append_result(
+                            f"    Port {port}: firewall switch is OFF, but raw scan still reports OPEN\n",
+                            "danger",
+                        )
 
                     total_risks += 1
                     severity = risk["info"]["risk"]
