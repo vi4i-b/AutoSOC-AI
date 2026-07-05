@@ -129,8 +129,8 @@ class AutoSOCApp(ctk.CTk):
         }
         self.switches = {}
 
-        self._build_sidebar()
         self._build_main_panel()
+        self._build_sidebar()
         self._build_new_tab_panel()
         self._show_page("dashboard")
         self._build_fab()
@@ -441,7 +441,7 @@ class AutoSOCApp(ctk.CTk):
                 command=lambda p=port: self.toggle_port(p, self.switches[p]),
             )
             switch.pack(anchor="w", padx=10, pady=4)
-            switch.select()
+            switch.deselect()
             self.switches[port] = switch
 
         self.ports_canvas.configure(scrollregion=self.ports_canvas.bbox("all"))
@@ -566,6 +566,10 @@ class AutoSOCApp(ctk.CTk):
             wraplength=default_wraplength,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 16))
+
+        # auto-scan
+        if hasattr(self, 'start_scan_thread'):
+            self.start_scan_thread()
 
     def _show_page(self, page):
         if not hasattr(self, "main_frame") or not hasattr(self, "new_tab_frame"):
@@ -2244,6 +2248,26 @@ class AutoSOCApp(ctk.CTk):
             scanner = NetworkScanner()
             data = scanner.scan_network(target, ports=list(self.port_definitions.keys()))
             processed_devices = []
+
+            # switch sync
+            try:
+                # Извлекаем открытые порты (набор кортежей (ip, port))
+                open_ports_snapshot = self._extract_open_port_snapshot(data)
+                # Вытаскиваем только номера активных портов
+                active_ports = {port for ip, port in open_ports_snapshot}
+
+                # Переключаем свичи в UI (используем self._ui для потокобезопасности Tkinter)
+                def update_switches_ui():
+                    for port, switch in self.switches.items():
+                        if port in active_ports:
+                            switch.select()
+                        else:
+                            switch.deselect()
+
+                self._ui(update_switches_ui)
+            except Exception as sync_exc:
+                print(f"[UI SYNC ERROR] {sync_exc}")
+            # end switch sync
 
             self._append_result(f">>> SCANNING TARGET: {target}\n", "ai")
             self._append_result(
