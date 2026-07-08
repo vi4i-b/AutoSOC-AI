@@ -9,6 +9,10 @@ import subprocess
 import threading
 import time
 import webbrowser
+import platform
+import subprocess
+import json
+import re
 
 import customtkinter as ctk
 import tkinter as tk
@@ -1697,6 +1701,15 @@ class AutoSOCApp(ctk.CTk):
             "local_firewall",
             f"Port {port} ({service}) -> {state_text}. Rule: {rule_name or 'n/a'}. Result: {firewall_message}",
         )
+
+        # === SERVICE UNHARDENING ===
+        if success and is_open:
+            # if port is open, turn on the services
+            open_message = self._attempt_service_level_port_open(port, service)
+            if open_message:
+                self.result_box.insert("0.0", open_message, "info")
+        # ==============================================================
+
         if success and verify:
             target = self.ip_entry.get().strip()
             if self._target_appears_remote(target):
@@ -1813,15 +1826,7 @@ class AutoSOCApp(ctk.CTk):
             actions = [
                 (
                     "Disable File and Printer Sharing firewall group",
-                    [
-                        "advfirewall",
-                        "firewall",
-                        "set",
-                        "rule",
-                        "group=File and Printer Sharing",
-                        "new",
-                        "enable=No",
-                    ],
+                    ["advfirewall", "firewall", "set", "rule", "group=File and Printer Sharing", "new", "enable=No"],
                 ),
             ]
             messages = [f"[HARDEN] Port {port} ({service}) requires SMB service-level hardening.\n"]
@@ -1830,28 +1835,23 @@ class AutoSOCApp(ctk.CTk):
                 messages.append(f"[HARDEN] {label}: {self._format_command_result(result)}\n")
 
             stop_result = self._run_system_command(["sc", "stop", "LanmanServer"])
-            messages.append(f"[HARDEN] Stop Windows Server service (LanmanServer): {self._format_command_result(stop_result)}\n")
+            messages.append(
+                f"[HARDEN] Stop Windows Server service (LanmanServer): {self._format_command_result(stop_result)}\n")
             return "".join(messages)
 
         if port == 139:
             messages = [f"[HARDEN] Port {port} ({service}) requires NetBIOS over TCP/IP hardening.\n"]
             firewall_result = self._run_netsh(
-                [
-                    "advfirewall",
-                    "firewall",
-                    "set",
-                    "rule",
-                    "group=File and Printer Sharing",
-                    "new",
-                    "enable=No",
-                ]
+                ["advfirewall", "firewall", "set", "rule", "group=File and Printer Sharing", "new", "enable=No"]
             )
-            messages.append(f"[HARDEN] Disable File and Printer Sharing firewall group: {self._format_command_result(firewall_result)}\n")
+            messages.append(
+                f"[HARDEN] Disable File and Printer Sharing firewall group: {self._format_command_result(firewall_result)}\n")
 
-            netbios_result = self._run_system_command(
-                ["wmic", "nicconfig", "where", "IPEnabled=true", "call", "SetTcpipNetbios", "2"]
-            )
-            messages.append(f"[HARDEN] Disable NetBIOS over TCP/IP on active adapters: {self._format_command_result(netbios_result)}\n")
+            # ВМЕСТО WMIC: Используем современный PowerShell для отключения NetBIOS (2 = Disable)
+            ps_netbios = "Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object {$_.IPEnabled -eq $true} | ForEach-Object {$_.SetTcpipNetbios(2)}"
+            netbios_result = self._run_system_command(["PowerShell", "-Command", ps_netbios])
+            messages.append(
+                f"[HARDEN] Disable NetBIOS over TCP/IP on active adapters: {self._format_command_result(netbios_result)}\n")
             return "".join(messages)
 
         if port == 135:
@@ -1860,6 +1860,38 @@ class AutoSOCApp(ctk.CTk):
                 "AutoSOC keeps the firewall block, but does not stop RPC because that can break core Windows management. "
                 "Verify exposure from another host and restrict the network profile/segment.\n"
             )
+
+        return ""
+
+    def _attempt_service_level_port_open(self, port, service):
+        """Зеркальный метод: восстанавливает системные службы при активации порта в UI."""
+        port = int(port)
+        messages = []
+
+        if port == 445:
+            messages.append(f"[ALLOW] Restoring SMB service-level settings for Port {port}...\n")
+            # 1. Включаем обратно системную группу правил
+            res_fw = self._run_netsh(
+                ["advfirewall", "firewall", "set", "rule", "group=File and Printer Sharing", "new", "enable=Yes"])
+            messages.append(f"[ALLOW] Enable File and Printer Sharing group: {self._format_command_result(res_fw)}\n")
+            # 2. Запускаем службу LanmanServer обратно
+            res_sc = self._run_system_command(["sc", "start", "LanmanServer"])
+            messages.append(
+                f"[ALLOW] Start Windows Server service (LanmanServer): {self._format_command_result(res_sc)}\n")
+            return "".join(messages)
+
+        if port == 139:
+            messages.append(f"[ALLOW] Restoring NetBIOS settings for Port {port}...\n")
+            res_fw = self._run_netsh(
+                ["advfirewall", "firewall", "set", "rule", "group=File and Printer Sharing", "new", "enable=Yes"])
+            messages.append(f"[ALLOW] Enable File and Printer Sharing group: {self._format_command_result(res_fw)}\n")
+
+            # Включаем NetBIOS обратно (1 = Enable via DHCP, 0 = Enable)
+            ps_netbios = "Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object {$_.IPEnabled -eq $true} | ForEach-Object {$_.SetTcpipNetbios(1)}"
+            netbios_result = self._run_system_command(["PowerShell", "-Command", ps_netbios])
+            messages.append(
+                f"[ALLOW] Enable NetBIOS over TCP/IP on active adapters: {self._format_command_result(netbios_result)}\n")
+            return "".join(messages)
 
         return ""
 
@@ -2154,6 +2186,70 @@ class AutoSOCApp(ctk.CTk):
         if self.ai_chat_window and self.ai_chat_window.winfo_exists() and hasattr(self, "popup_loader"):
             self.popup_loader.configure(text="")
 
+    def _get_blocked_ports_from_system(self):
+        """Возвращает set() номеров портов, заблокированных системным брандмауэром."""
+        blocked_ports = set()
+        current_os = platform.system().lower()
+
+        # --- ЛОГИКА ДЛЯ WINDOWS ---
+        if current_os == "windows":
+            try:
+                ps_cmd = (
+                    'PowerShell -Command "'
+                    'Get-NetFirewallRule -Name AutoSOC_Manual_* -ErrorAction SilentlyContinue | '
+                    'Where-Object { $_.Enabled -eq \'True\' -and $_.Action -eq \'Block\' } | '
+                    'Select-Object -Property Name | ConvertTo-Json"'
+                )
+                res = subprocess.run(ps_cmd, capture_output=True, text=True, shell=True)
+                if res.returncode == 0 and res.stdout.strip():
+                    raw_json = json.loads(res.stdout.strip())
+                    rules = raw_json if isinstance(raw_json, list) else [raw_json]
+                    for rule in rules:
+                        rule_name = rule.get("Name", "")
+                        if "AutoSOC_Manual_" in rule_name:
+                            try:
+                                port_num = int(rule_name.split("AutoSOC_Manual_")[-1])
+                                blocked_ports.add(port_num)
+                            except ValueError:
+                                pass
+            except Exception as e:
+                print(f"[CROSS-PLATFORM] Windows firewall check failed: {e}")
+
+        # --- ЛОГИКА ДЛЯ LINUX (iptables) ---
+        elif current_os == "linux":
+            try:
+                # Проверяем правила iptables с флагом -S (вывод в виде команд)
+                # Ищем кастомную цепочку или комментарий AutoSOC
+                res = subprocess.run(["sudo", "iptables", "-S"], capture_output=True, text=True)
+                if res.returncode == 0:
+                    # Ищем паттерны блокировки портов. Например: -A INPUT -p tcp --dport 135 -j DROP
+                    # Или если ты помечаешь правила комментарием: -m comment --comment "AutoSOC_Manual"
+                    for line in res.stdout.splitlines():
+                        if "DROP" in line or "REJECT" in line:
+                            # Ищем номер порта после --dport
+                            match = re.search(r'--dport\s+(\d+)', line)
+                            if match:
+                                blocked_ports.add(int(match.group(1)))
+            except Exception as e:
+                print(f"[CROSS-PLATFORM] Linux firewall check failed: {e}")
+
+        # --- ЛОГИКА ДЛЯ MACOS (pfctl) ---
+        elif current_os == "darwin":
+            try:
+                # В macOS используется пакетный фильтр PF.
+                # Читаем активные правила блокировки
+                res = subprocess.run(["sudo", "pfctl", "-sr"], capture_output=True, text=True)
+                if res.returncode == 0:
+                    for line in res.stdout.splitlines():
+                        if "block" in line and "port" in line:
+                            match = re.search(r'port\s+(\d+)', line)
+                            if match:
+                                blocked_ports.add(int(match.group(1)))
+            except Exception as e:
+                print(f"[CROSS-PLATFORM] macOS firewall check failed: {e}")
+
+        return blocked_ports
+
     def run_logic(self, target):
         try:
             scanner = NetworkScanner()
@@ -2162,20 +2258,26 @@ class AutoSOCApp(ctk.CTk):
 
             # switch sync
             try:
-                # Извлекаем открытые порты (набор кортежей (ip, port))
                 open_ports_snapshot = self._extract_open_port_snapshot(data)
-                # Вытаскиваем только номера активных портов
                 active_ports = {port for ip, port in open_ports_snapshot}
 
-                # Переключаем свичи в UI (используем self._ui для потокобезопасности Tkinter)
+                # Вызываем наш новый метод определения блоков в ОС
+                blocked_in_firewall = self._get_blocked_ports_from_system()
+
                 def update_switches_ui():
                     for port, switch in self.switches.items():
                         if port in active_ports:
-                            switch.select()
+                            # Если порт в системе заблокирован нашим брандмауэром — свич падает в OFF
+                            if port in blocked_in_firewall:
+                                switch.deselect()
+                            else:
+                                switch.select()
                         else:
+                            # Если порт вообще закрыт в сети — свич в OFF
                             switch.deselect()
 
                 self._ui(update_switches_ui)
+
             except Exception as sync_exc:
                 print(f"[UI SYNC ERROR] {sync_exc}")
             # end switch sync
