@@ -1,293 +1,76 @@
 # AutoSOC AI Kod Naviqasiyası
 
-Bu sənəd kod yazmayan və ya az kod bilən komanda üzvləri üçün hazırlanıb.
-Məqsəd sadədir: layihədə hansı faylın nə iş gördüyünü tez başa düşmək.
+Bu sənəd layihədə hansı faylın nə iş gördüyünü tez başa düşmək üçündür.
+Kod artıq `autosoc/` paketi daxilində qatlara bölünüb.
 
 ## Ümumi mənzərə
 
-Layihəni indi 6 əsas hissəyə bölmək daha rahatdır:
-
-1. Login və qeydiyyat
-2. Əsas dashboard və UI
-3. Skan və risk analizi
-4. Monitorinq, firewall və təhlükə reaksiyası
-5. Məlumatların saxlanması və audit
-6. AI, helper və validation qatları
-
-Ən vacib qısa yaddaş:
-
-- [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py) - tətbiqə giriş nöqtəsidir
-- [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py) - əsas tətbiq pəncərəsidir
-- [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py) - portları yoxlayır
-- [`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py) - hansı portların riskli olduğunu təyin edir
-- [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py) - istifadəçi girişi və Telegram bağlanmasını idarə edir
-- [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py) - scan history, settings, audit və security event-ləri saxlayır
-
-## Fayl-fayl izah
-
-## 1. `main.py`
-
-Bu fayl layihənin mərkəzidir.
-
-Burada bunlar yerləşir:
-
-- əsas dashboard
-- metrik kartları
-- port aç / bağla düymələri
-- skan konsolu
-- Telegram statusu
-- AI köməkçi paneli
-- canary və incident reaction
-- firewall əməliyyatları
-
-Əgər problem bunlarla bağlıdırsa:
-
-- dashboard sayları
-- scan nəticələrinin görünməsi
-- Telegram alert-lər
-- firewall davranışı
-- canary / guard reaksiyası
-- AI paneli
-
-birinci baxılacaq fayl [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)-dır.
-
-## 2. `login.py`
-
-Bu fayl giriş ekranını idarə edir.
-
-Burada bunlar var:
-
-- splash screen
-- login və qeydiyyat UI
-- Telegram Chat ID ilə qeydiyyat
-- login pəncərəsində Telegram listener
-- `/start` gələndə Chat ID-nin formaya yazılması
-
-Əgər problem bunlarla bağlıdırsa:
-
-- login pəncərəsi
-- qeydiyyat forması
-- scroll problemi
-- `/start` cavabı
-- Chat ID sahəsi
-
-onda [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py)-a baxın.
-
-## 3. `auth.py`
-
-Bu fayl istifadəçi hesablarını idarə edir.
-
-Burada bunlar edilir:
-
-- login yoxlanılır
-- yeni hesab yaradılır
-- remember me idarə olunur
-- eyni Telegram Chat ID ilə ikinci hesab bloklanır
-- Windows credential və lokal credential axını koordinator olunur
-
-Əgər problem bunlarla bağlıdırsa:
-
-- qeydiyyat
-- login
-- Telegram Chat ID unikallığı
-- remember me
-- hesab ilə Telegram əlaqəsi
-
-[`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py)-a baxın.
-
-## 4. `database.py`
-
-Bu fayl vahid SQLite qatıdır.
-
-Burada saxlanılır:
-
-- scan history
-- Telegram istifadəçi məlumatları
-- tətbiq ayarları
-- security events
-- audit events
-- exposure baseline
-
-Saxlanma, migrasiya və ya jurnal problemi varsa, [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py)-a baxın.
-
-## 5. `scanner.py`
-
-Bu fayl Nmap əsaslı scan edir.
-
-Burada:
-
-- seçilmiş portlar yoxlanılır
-- açıq portlar qaytarılır
-- checked/open/closed/filtered xülasəsi yaradılır
-
-Əgər problem port scan-dadırsa, [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py)-a baxın.
-
-## 6. `analyzer.py`
-
-Bu faylda risk bazası var.
-
-Burada:
-
-- hansı portların riskli sayıldığı qeyd olunub
-- risk severity və prevention təsviri verilir
-
-Yeni riskli port əlavə etmək üçün ən rahat fayllardan biri budur:
-[`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py)
-
-## 7. `guard.py`
-
-Bu fayl trafik monitorinqi və avtomatik reaksiya üçündür.
-
-Əgər problem bunlarla bağlıdırsa:
-
-- traffic spike monitorinqi
-- threshold
-- auto block
-- suspicious traffic reaction
-
-fayl:
-[`guard.py`](/C:/Users/user/PycharmProjects/AutoSOC/guard.py)
-
-## 8. `log_listener.py`
-
-Bu fayl Windows Security log-u dinləyir.
-
-Burada:
-
-- Event ID 4625 failed logon event-ləri izlənir
-- brute-force siqnalları çıxarılır
-- source IP tapılır
-
-Əgər problem Windows log reaction ilə bağlıdırsa, [`log_listener.py`](/C:/Users/user/PycharmProjects/AutoSOC/log_listener.py)-a baxın.
-
-## 9. `ai_expert.py`
-
-Bu fayl AI izahı və tövsiyə hissəsini idarə edir.
-
-Burada dəyişmək olar:
-
-- scan xülasəsi
-- AI cavabları
-- prompt davranışı
-- fallback expert mode
-- language detection
-
-fayl:
-[`ai_expert.py`](/C:/Users/user/PycharmProjects/AutoSOC/ai_expert.py)
-
-## 10. Helper fayllar
-
-### `runtime_support.py`
-
-Burada:
-
-- `.env` oxunması
-- ikon helper-ləri
-- Telegram client helper-i
-
-fayl:
-[`runtime_support.py`](/C:/Users/user/PycharmProjects/AutoSOC/runtime_support.py)
-
-### `security_utils.py`
-
-Burada:
-
-- parol hash
-- parol verify
-- legacy hash uyğunluğu
-- rehash ehtiyacı
-
-fayl:
-[`security_utils.py`](/C:/Users/user/PycharmProjects/AutoSOC/security_utils.py)
-
-### `validators.py`
-
-Burada:
-
-- username validation
-- password validation
-- Telegram Chat ID validation
-- safe scan target validation
-
-fayl:
-[`validators.py`](/C:/Users/user/PycharmProjects/AutoSOC/validators.py)
-
-## 11. Testlər
-
-[`tests/`](/C:/Users/user/PycharmProjects/AutoSOC/tests) qovluğunda əsas smoke və unit test-lər yerləşir.
-
-Hazırda xüsusilə bunlar vacibdir:
-
-- [`tests/test_database.py`](/C:/Users/user/PycharmProjects/AutoSOC/tests/test_database.py)
-- [`tests/test_security_utils.py`](/C:/Users/user/PycharmProjects/AutoSOC/tests/test_security_utils.py)
-
-## Tipik dəyişikliklər üçün bələdçi
-
-### Qeydiyyat formasını dəyişmək istəyəndə
-
-Baxın:
-[`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py)
-
-Açar funksiyalar:
-
-- `def _build_ui(self):`
-- `def attempt_register(self):`
-
-### Telegram davranışını dəyişmək istəyəndə
-
-Baxın:
-
-- [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py)
-- [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)
-- [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py)
-- [`runtime_support.py`](/C:/Users/user/PycharmProjects/AutoSOC/runtime_support.py)
-
-### Dashboard rəqəmlərini dəyişmək istəyəndə
-
-Baxın:
-[`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)
-
-Açar hissələr:
-
-- `_refresh_dashboard_metrics`
-- `_count_live_open_ports`
-- `_update_exposure_baseline`
-
-### Firewall davranışını dəyişmək istəyəndə
-
-Baxın:
-[`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)
-
-Açar hissələr:
-
-- `toggle_port`
-- `_set_port_firewall_rule`
-- `_block_ip_in_firewall`
-
-### Audit və event saxlanmasını dəyişmək istəyəndə
-
-Baxın:
-[`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py)
-
-Açar hissələr:
-
-- `add_security_event`
-- `add_audit_event`
-- `set_setting`
-
-## Kod bilməyənlər üçün ən rahat qayda
-
-- UI problemi -> [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py) və ya [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py)
-- Telegram problemi -> [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py), [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py), [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py)
-- istifadəçi problemi -> [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py), [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py)
-- scan problemi -> [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py)
-- risk problemi -> [`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py)
-- validation problemi -> [`validators.py`](/C:/Users/user/PycharmProjects/AutoSOC/validators.py)
-- audit və storage problemi -> [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py)
-
-## Əlavə idarəetmə sənədləri
-
-- [`docs/ru/PROGRAMMER_TASKS.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/PROGRAMMER_TASKS.md)
-- [`docs/ru/AI_DEVELOPER_TASKS.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/AI_DEVELOPER_TASKS.md)
-
-Bu sənəd komandanın layihədə rahat istiqamətlənməsi üçün kifayətdir.
+```
+main.py                  # giriş nöqtəsi: login → dashboard
+autosoc/
+├── ui/                  # pəncərələr (CustomTkinter)
+├── system/              # əməliyyat sistemi ilə iş (firewall, loglar, hüquqlar)
+├── telegram/            # Telegram bot müştərisi və dinləyicisi
+├── ai/                  # AI provayderləri
+└── *.py                 # əsas biznes-məntiq modulları
+```
+
+## Qatlar üzrə izah
+
+### Giriş nöqtəsi
+
+- `main.py` — logging və `.env` konfiqurasiyasını qurur, login pəncərəsini açır,
+  uğurlu girişdən sonra dashboard-u başladır.
+
+### UI qatı — `autosoc/ui/`
+
+- `login.py` — splash, giriş və qeydiyyat pəncərəsi.
+- `dashboard.py` — əsas pəncərənin məntiqi: skan, port idarəsi, alertlər, AI panel.
+- `dashboard_layout.py` — dashboard-un vidjetlərinin qurulması (yalnız görünüş).
+- `chat_window.py` — ayrıca AI chat pəncərəsi (hazırda istifadə olunmur).
+- `theme.py` — ümumi rəng palitrası və pəncərə ikonu.
+
+### Sistem qatı — `autosoc/system/`
+
+- `firewall.py` — Windows üçün `netsh`, Linux üçün `iptables` backend-ləri.
+  Bütün qaydalar `AutoSOC_` prefiksi daşıyır.
+- `log_monitor.py` — brute-force aşkarlanması: Windows Security log (4625) və
+  Linux `/var/log/auth.log`.
+- `hardening.py` — port bağlananda xidmətlərin dayandırılması (SMB, NetBIOS və s.).
+- `privileges.py` — admin/root yoxlaması.
+- `netinfo.py` — lokal IP-lər, hədəfin uzaq olub-olmadığının təyini.
+- `os_auth.py` — Windows hesabı ilə giriş (`LogonUserW`); Linux-da deaktivdir.
+- `commands.py` — shell istifadə etmədən təhlükəsiz əmr icrası.
+
+### Əsas modullar — `autosoc/`
+
+- `scanner.py` — nmap ilə port skanı.
+- `analyzer.py` — riskli portların kataloqu və risk score.
+- `ports.py` — izlənən portların vahid siyahısı.
+- `database.py` — SQLite: istifadəçilər, skanlar, settings, audit/security events,
+  login lockout.
+- `auth.py` — giriş, qeydiyyat, lockout siyasəti, remember-me.
+- `security_utils.py` — PBKDF2 parol hash-i.
+- `validators.py` — username, parol, chat ID və skan hədəfinin yoxlanması.
+- `guard.py` — trafik sıçrayışlarının (DDoS) monitorinqi.
+- `canary.py` — tələ portları.
+- `paths.py` — istifadəçi data qovluğu (`%APPDATA%\AutoSOC` / `~/.local/share/autosoc`).
+- `env.py`, `logging_setup.py` — konfiqurasiya və loglama.
+
+### Telegram — `autosoc/telegram/`
+
+- `client.py` — Bot API müştərisi (token error mesajlarından silinir).
+- `listener.py` — long-polling dinləyicisi (login və dashboard bunu paylaşır).
+
+### AI — `autosoc/ai/`
+
+- `nvidia.py` — NVIDIA API üzərindən analiz.
+- `expert.py` — OpenAI/Ollama + daxili offline ekspert rejimi.
+
+## Testlər
+
+`tests/` qovluğunda unittest-lər var:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```

@@ -1,141 +1,152 @@
 # AutoSOC AI
 
-AutoSOC AI kiçik komandalar və lokal şəbəkələr üçün hazırlanmış masaüstü kibertəhlükəsizlik köməkçisidir.
-Layihə şəbəkə skanı, riskli port analizi, Windows firewall idarəsi, AI izahı və Telegram bildirişlərini bir tətbiqdə birləşdirir.
+AutoSOC AI is a desktop cybersecurity assistant for small teams and local
+networks. It combines network scanning, risky-port analysis, firewall
+management, AI explanations, and Telegram alerting in one application.
 
-## Layihə nə edir
+Runs on **Windows** and **Linux (Ubuntu)**.
 
-- Seçilmiş hədəfdə izlənən TCP portları skan edir.
-- Riskli servis və portları aşkar edir.
-- Dashboard üzərində cihaz sayı, açıq portlar, risk skoru və Telegram statusunu göstərir.
-- Portları tətbiqdən açmağa və bağlamağa imkan verir.
-- Şübhəli trafik, canary hit və digər təhlükə siqnallarını jurnalına yazır.
-- Skan nəticələrini və alertləri Telegram-a göndərir.
-- Telegram Chat ID-ni konkret istifadəçi hesabına bağlayır.
-- AI köməkçisi vasitəsilə nəticələri izah edir və növbəti addımları təklif edir.
+Documentation in other languages: [Русский](docs/ru/README.md)
 
-## Cari güclü tərəflər
+## What it does
 
-- Telegram Chat ID ilə qeydiyyat və giriş
-- `/start`, `/id`, `/help` komandalarını dəstəkləyən Telegram bot
-- Real-time dashboard yenilənməsi
-- Riskli portların AI izahı
-- Windows firewall üzərindən port idarəsi
-- Port Canary və təhlükə jurnalı
-- Exposure baseline drift izlənməsi
-- Audit event və security event saxlanması
-- Gücləndirilmiş parol saxlanması və köhnə hash-lər üçün uyğunluq
-- PyInstaller ilə `.exe` build
+- Scans a target for tracked TCP ports (nmap).
+- Detects risky services and computes a risk score.
+- Shows a live dashboard: devices, open ports, risk score, incidents, Telegram status.
+- Opens/blocks ports through the system firewall (netsh on Windows, iptables on Linux).
+- Detects login brute-force (Windows Security log / Linux auth.log).
+- Runs Port Canary decoy listeners and logs threat events.
+- Sends scan results and alerts to Telegram.
+- Explains findings via an AI copilot (NVIDIA API, OpenAI, or local Ollama — with an offline fallback).
 
-## Texnologiyalar
+## Project structure
 
-- Python 3.14
-- CustomTkinter
-- Requests
-- python-nmap
-- Scapy
-- SQLite
-- PyInstaller
-
-## Layihə strukturu
-
-- [`main.py`](/C:/Users/user/PycharmProjects/AutoSOC/main.py) - əsas dashboard, skan prosesi, Telegram alertləri, AI paneli, firewall idarəsi
-- [`login.py`](/C:/Users/user/PycharmProjects/AutoSOC/login.py) - login və qeydiyyat pəncərəsi, login mərhələsində Telegram listener
-- [`auth.py`](/C:/Users/user/PycharmProjects/AutoSOC/auth.py) - istifadəçi girişi, qeydiyyat, remember me və Telegram bağlanması
-- [`database.py`](/C:/Users/user/PycharmProjects/AutoSOC/database.py) - vahid SQLite sxemi, scan history, settings, audit və security event-lər
-- [`scanner.py`](/C:/Users/user/PycharmProjects/AutoSOC/scanner.py) - Nmap əsaslı port skanı
-- [`analyzer.py`](/C:/Users/user/PycharmProjects/AutoSOC/analyzer.py) - riskli portların analizi və risk score
-- [`guard.py`](/C:/Users/user/PycharmProjects/AutoSOC/guard.py) - trafik monitorinqi və avtomatik bloklama
-- [`log_listener.py`](/C:/Users/user/PycharmProjects/AutoSOC/log_listener.py) - Windows Security log dinləyicisi
-- [`ai_expert.py`](/C:/Users/user/PycharmProjects/AutoSOC/ai_expert.py) - AI izah və tövsiyələr
-- [`runtime_support.py`](/C:/Users/user/PycharmProjects/AutoSOC/runtime_support.py) - `.env`, ikonlar və Telegram client üçün ortaq runtime helper-lər
-- [`security_utils.py`](/C:/Users/user/PycharmProjects/AutoSOC/security_utils.py) - parol hash və verify helper-ləri
-- [`validators.py`](/C:/Users/user/PycharmProjects/AutoSOC/validators.py) - username, password, chat ID və scan target validation
-- [`tests/`](/C:/Users/user/PycharmProjects/AutoSOC/tests) - əsas smoke və unit test-lər
-- [`main.spec`](/C:/Users/user/PycharmProjects/AutoSOC/main.spec) - PyInstaller build konfiqurasiyası
-
-## Layihəni necə işə salmaq olar
-
-1. [`requirements.txt`](/C:/Users/user/PycharmProjects/AutoSOC/requirements.txt) faylındakı asılılıqları quraşdırın.
-2. [`.env`](/C:/Users/user/PycharmProjects/AutoSOC/.env) faylına Telegram bot token əlavə edin.
-3. İstəyə görə lokal AI üçün Ollama quraşdırın və modeli yükləyin:
-
-```powershell
-ollama pull llama3.1:8b
-ollama serve
+```
+main.py                  # entry point
+autosoc/
+├── analyzer.py          # risk catalog and scoring
+├── auth.py              # login, registration, lockout, remember-me
+├── canary.py            # decoy port listeners
+├── database.py          # SQLite storage (users, scans, events, settings)
+├── env.py               # .env loader
+├── guard.py             # traffic-spike (DDoS) monitor
+├── logging_setup.py     # console + rotating file logging
+├── paths.py             # per-user data dir, resource paths
+├── ports.py             # tracked ports (single source of truth)
+├── scanner.py           # nmap wrapper
+├── security_utils.py    # PBKDF2 password hashing
+├── validators.py        # input validation
+├── ai/                  # AI providers (nvidia.py, expert.py)
+├── system/              # OS integration
+│   ├── commands.py      #   safe subprocess execution (no shell)
+│   ├── firewall.py      #   netsh / iptables backends
+│   ├── hardening.py     #   service-level hardening per OS
+│   ├── log_monitor.py   #   failed-login monitoring per OS
+│   ├── netinfo.py       #   local IPs, remote-target detection
+│   ├── os_auth.py       #   Windows account login (LogonUserW)
+│   └── privileges.py    #   admin/root checks
+├── telegram/            # bot client + long-polling listener
+└── ui/                  # CustomTkinter windows (login, dashboard, chat)
+tests/                   # unit tests
 ```
 
-4. [`.env`](/C:/Users/user/PycharmProjects/AutoSOC/.env) içində bu dəyərlərdən istifadə edin:
+## Installation
 
-```env
-AI_PROVIDER=auto
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-OLLAMA_URL=http://localhost:11434/api/chat
-OLLAMA_MODEL=llama3.1:8b
+### Ubuntu / Linux
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-tk nmap libpcap0.8
+
+git clone https://github.com/vi4i-b/AutoSOC-AI.git
+cd AutoSOC-AI
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cp .env.example .env        # then fill in your tokens
 ```
 
-5. Tətbiqi bu komanda ilə başladın:
+Run:
+
+```bash
+# Regular mode (scanning, dashboard, Telegram, AI):
+.venv/bin/python main.py
+
+# With firewall management, brute-force monitoring and Guard (needs root):
+sudo -E .venv/bin/python main.py
+```
+
+Notes for Linux:
+- Firewall control uses **iptables**; rules are tagged `AutoSOC_*`.
+- Brute-force detection reads `/var/log/auth.log` (root or `adm` group).
+- OS-account login is Windows-only; on Linux use a local AutoSOC account
+  (register in the login window).
+
+### Windows
+
+1. Install Python 3.12+, [Nmap](https://nmap.org/download.html) and
+   (optionally, for Guard) [Npcap](https://npcap.com/).
+2. `pip install -r requirements.txt`
+3. Copy `.env.example` to `.env` and fill in your tokens.
+4. Run as Administrator for firewall management:
 
 ```powershell
 python main.py
 ```
 
-## AI necə işləyir
+## Configuration (.env)
 
-AutoSOC `AI_PROVIDER=auto` rejimində işləyir:
+See [.env.example](.env.example) for the full annotated list. Key values:
 
-- `OPENAI_API_KEY` varsa, OpenAI istifadə edir
-- OpenAI açarı yoxdursa, işlək `Ollama` instansiyasını yoxlayır
-- heç biri yoxdursa, daxili ekspert rejimində cavab verir
+| Variable | Purpose |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather (enables alerts) |
+| `NVIDIA_API_KEY` | NVIDIA-hosted models for the copilot |
+| `AI_PROVIDER` / `OPENAI_API_KEY` / `OLLAMA_URL` | Expert-mode AI provider selection |
+| `AUTOSOC_DATA_DIR` | Override the data directory |
+| `AUTOSOC_LOG_LEVEL` | DEBUG / INFO / WARNING / ERROR |
 
-Ən rahat pulsuz lokal variant `Ollama + llama3.1:8b` modelidir.
+Application data (database, logs, AI memory) is stored per user:
+`%APPDATA%\AutoSOC` on Windows, `~/.local/share/autosoc` on Linux.
 
-## Telegram necə işləyir
+## How Telegram linking works
 
-1. Tətbiqi başladın.
-2. Login və ya qeydiyyat pəncərəsindən botu açın.
-3. Bota `/start` yazın.
-4. Botun qaytardığı `Telegram Chat ID` dəyərini kopyalayın.
-5. Onu qeydiyyat formasına daxil edin.
-6. Hesaba daxil olun və scan başladın.
-7. Nəticələr və alert-lər həmin Telegram çata göndəriləcək.
+1. Start the app and open the bot (button in the login window).
+2. Send `/start` to the bot and copy the returned `Telegram Chat ID`.
+3. Paste it into the registration form (the app also captures it automatically).
+4. After login, scan results and alerts are sent to that chat.
 
-## Testləri necə işlətmək olar
+## How the AI works
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+With `AI_PROVIDER=auto` the expert answers use, in order of availability:
+OpenAI (if `OPENAI_API_KEY` is set) → local Ollama → built-in offline expert
+mode. The dashboard copilot additionally uses the NVIDIA API when
+`NVIDIA_API_KEY` is set. The most convenient free local option is
+`Ollama + llama3.1:8b`.
+
+## Tests
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
-## `.exe` necə yığılır
+## Building a binary
 
-```powershell
-.\.venv\Scripts\python.exe -m PyInstaller --clean main.spec
+```bash
+pip install -r requirements-dev.txt
+python -m PyInstaller --clean main.spec
 ```
 
-Nəticə [`dist/AutoSOC.exe`](/C:/Users/user/PycharmProjects/AutoSOC/dist/AutoSOC.exe) faylında yaranır.
+The result appears in `dist/AutoSOC` (`dist/AutoSOC.exe` on Windows).
 
-## Vacib qeydlər
+## Security
 
-- Tətbiq Windows üçün nəzərdə tutulub, çünki `netsh advfirewall` istifadə edir.
-- Skan və firewall əmrlərinin düzgün işləməsi üçün administrator icazəsi lazımdır.
-- Şəbəkə skanı üçün `Nmap` quraşdırılmış olmalıdır.
-- Bəzi sniffing və packet capture ssenariləri üçün `Npcap` tələb oluna bilər.
-- Telegram bot cavabları tətbiq işləyərkən aktiv olur, çünki polling tətbiqin içində işləyir.
+See [SECURITY.md](SECURITY.md) for the security model: secrets handling,
+password storage, account lockout, privileges, and what data leaves the
+machine. **Only scan hosts and networks you own or are authorized to test.**
 
-## Növbəti inkişaf istiqamətləri
+## Additional documents
 
-- Anti-phishing modulu
-- AI incident copilot gücləndirilməsi
-- Daha geniş regression test suite
-- Release və installer axınının daha da sabitləşdirilməsi
-
-## Əlavə sənədlər
-
-- [`docs/CODE_NAVIGATION.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/CODE_NAVIGATION.md)
-- [`docs/HACKATHON_PRESENTATION.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/HACKATHON_PRESENTATION.md)
-- [`docs/ru/README.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/README.md)
-- [`docs/ru/CODE_NAVIGATION.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/CODE_NAVIGATION.md)
-- [`docs/ru/HACKATHON_PRESENTATION.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/HACKATHON_PRESENTATION.md)
-- [`docs/ru/PROGRAMMER_TASKS.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/PROGRAMMER_TASKS.md)
-- [`docs/ru/AI_DEVELOPER_TASKS.md`](/C:/Users/user/PycharmProjects/AutoSOC/docs/ru/AI_DEVELOPER_TASKS.md)
+- [docs/CODE_NAVIGATION.md](docs/CODE_NAVIGATION.md)
+- [docs/ru/README.md](docs/ru/README.md)
+- [docs/HACKATHON_PRESENTATION.md](docs/HACKATHON_PRESENTATION.md)

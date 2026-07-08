@@ -1,16 +1,27 @@
+# IDE
 .idea/
+.vscode/
 
+# Secrets — never commit the real .env (.env.example IS committed)
 .env
-.env.example
 
+# Build artifacts
 build/
 dist/
-tests/
-
 __pycache__/
+*.pyc
 
+# Virtual environments
+.venv/
+venv/
+
+# Local application data (also stored in the user data dir, but keep the
+# working tree clean if legacy files appear here)
 *.db
-*.db*
+*.db-*
+remember.json
+ai_memory.json
+*.log
 
 # personal
 TODO LIST

@@ -16,11 +16,11 @@ SetupIconFile=..\assets\app_icon.ico
 UninstallDisplayIcon={app}\AutoSOC.exe
 
 [Files]
+; The database and AI memory are created automatically in %APPDATA%\AutoSOC
+; on first run — they must not be shipped with the installer.
 Source: "..\dist\AutoSOC.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\Launch AutoSOC.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\ai_memory.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
-Source: "..\dist\soc_audit.db"; DestDir: "{app}"; Flags: onlyifdoesntexist
-Source: "..\dist\.env.example"; DestDir: "{app}"; Flags: onlyifdoesntexist
+Source: "..\.env.example"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]
 Name: "{group}\AutoSOC"; Filename: "{app}\Launch AutoSOC.bat"; WorkingDir: "{app}"
