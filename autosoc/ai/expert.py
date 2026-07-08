@@ -5,8 +5,10 @@ from datetime import datetime
 
 import requests
 
-from database import SOCDatabase
-from runtime_support import load_env_file
+from autosoc.database import SOCDatabase
+from autosoc.env import load_env_file
+from autosoc.paths import data_file, migrate_legacy_file, restrict_file_permissions
+from autosoc.ports import TRACKED_PORTS
 
 
 class AISecurityExpert:
@@ -31,16 +33,11 @@ class AISecurityExpert:
         self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat").strip()
         self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3.1:8b").strip()
-        self.memory_file = os.getenv("AI_MEMORY_FILE", "ai_memory.json").strip() or "ai_memory.json"
+        self.memory_file = (os.getenv("AI_MEMORY_FILE") or "").strip() or data_file("ai_memory.json")
+        migrate_legacy_file(os.path.join(os.getcwd(), "ai_memory.json"), self.memory_file)
         self.history_limit = 16
         self.shared_db = SOCDatabase()
-        self.port_catalog = {
-            21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP",
-            110: "POP3", 135: "RPC", 139: "NetBIOS", 143: "IMAP", 443: "HTTPS",
-            445: "SMB", 1433: "MS-SQL", 1521: "Oracle DB", 3306: "MySQL",
-            3389: "RDP", 5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
-            8080: "HTTP-Alt", 8443: "HTTPS-Alt", 27017: "MongoDB",
-        }
+        self.port_catalog = dict(TRACKED_PORTS)
         self.security_keywords = [
             "security", "cyber", "phishing", "phish", "brute", "malware", "ransomware",
             "firewall", "port", "network", "hardening", "vulnerability", "threat", "incident",
@@ -93,6 +90,7 @@ class AISecurityExpert:
         try:
             with open(self.memory_file, "w", encoding="utf-8") as memory_file:
                 json.dump(self.memory, memory_file, ensure_ascii=False, indent=2)
+            restrict_file_permissions(self.memory_file)
         except OSError:
             pass
 
@@ -586,7 +584,3 @@ class AISecurityExpert:
         self._remember_turn(prompt, fallback, self.infer_topic(prompt, devices))
         return fallback
 
-
-if __name__ == "__main__":
-    expert = AISecurityExpert()
-    print(expert.answer_question("hello"))

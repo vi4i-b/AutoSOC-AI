@@ -1,3 +1,11 @@
+"""Decoy (honeypot) TCP listeners on non-production ports.
+
+Binds to all interfaces by design — the whole point is to be reachable by
+scanners on the local network. Override with AUTOSOC_CANARY_HOST to restrict
+the bind address (e.g. to a single interface).
+"""
+
+import os
 import socket
 import threading
 from datetime import datetime
@@ -6,9 +14,9 @@ from datetime import datetime
 class PortCanary:
     DEFAULT_PORTS = [2222, 2323, 8023]
 
-    def __init__(self, callback, listen_host="0.0.0.0", ports=None, alert_cooldown=8):
+    def __init__(self, callback, listen_host=None, ports=None, alert_cooldown=8):
         self.callback = callback
-        self.listen_host = listen_host
+        self.listen_host = listen_host or (os.getenv("AUTOSOC_CANARY_HOST") or "").strip() or "0.0.0.0"
         self.ports = list(ports or self.DEFAULT_PORTS)
         self.alert_cooldown = int(alert_cooldown)
         self.is_running = False

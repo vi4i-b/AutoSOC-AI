@@ -2,7 +2,7 @@ import os
 
 import requests
 
-from runtime_support import load_env_file
+from autosoc.env import load_env_file
 
 
 class NvidiaSecurityAI:

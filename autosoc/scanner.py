@@ -1,4 +1,11 @@
+"""Nmap-based TCP port scanning."""
+
 import nmap
+
+from autosoc.logging_setup import get_logger
+from autosoc.ports import TRACKED_PORTS
+
+log = get_logger("scanner")
 
 
 def count_open_ports(scan_results):
@@ -42,11 +49,7 @@ def summarize_single_port_state(scan_results, port):
 
 
 class NetworkScanner:
-    DEFAULT_PORTS = [
-        21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443,
-        445, 1433, 1521, 3306, 3389, 5432, 5900, 6379,
-        8080, 8443, 27017,
-    ]
+    DEFAULT_PORTS = sorted(TRACKED_PORTS)
 
     def __init__(self):
         self.nm = nmap.PortScanner()
@@ -55,6 +58,8 @@ class NetworkScanner:
         try:
             selected_ports = ports or self.DEFAULT_PORTS
             ports_arg = ",".join(str(port) for port in selected_ports)
+            # -sT: TCP connect scan (works without root), -Pn: skip host
+            # discovery, -n: no DNS resolution.
             self.nm.scan(hosts=target, ports=ports_arg, arguments="-sT -Pn -n")
 
             scan_results = []
@@ -98,13 +103,5 @@ class NetworkScanner:
 
             return scan_results
         except Exception as exc:
-            print(f"Scanner error: {exc}")
+            log.error("Scanner error: %s", exc)
             return []
-
-
-if __name__ == "__main__":
-    scanner = NetworkScanner()
-    print("Starting scan...")
-    results = scanner.scan_network("127.0.0.1")
-    for res in results:
-        print(f"IP: {res['ip']}, Vendor: {res['vendor']}")

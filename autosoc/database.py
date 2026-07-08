@@ -1,23 +1,45 @@
+"""SQLite storage: users, scans, settings, security and audit events.
+
+The database lives in the per-user data directory (see :mod:`autosoc.paths`)
+with owner-only permissions. A single connection is shared across threads and
+guarded by an RLock.
+"""
+
 import os
 import secrets
 import sqlite3
 import threading
+import time
 from datetime import datetime
 
-from security_utils import hash_password, needs_rehash, verify_password
+from autosoc.paths import data_file, migrate_legacy_file, restrict_file_permissions
+from autosoc.security_utils import hash_password, needs_rehash, verify_password
+
+# Account lockout policy: after MAX_FAILED_LOGINS failures within
+# LOCKOUT_WINDOW_SECONDS, further attempts are rejected until the window
+# passes (protects local accounts from brute force).
+MAX_FAILED_LOGINS = 5
+LOCKOUT_WINDOW_SECONDS = 900
 
 
-DB_PATH = (os.getenv("AUTOSOC_DB_PATH", "soc_audit.db") or "soc_audit.db").strip()
+def resolve_db_path() -> str:
+    override = (os.getenv("AUTOSOC_DB_PATH") or "").strip()
+    if override:
+        return override
+    path = data_file("soc_audit.db")
+    migrate_legacy_file(os.path.join(os.getcwd(), "soc_audit.db"), path)
+    return path
 
 
 class SOCDatabase:
     def __init__(self, db_path=None):
-        self.db_path = db_path or DB_PATH
+        self.db_path = db_path or resolve_db_path()
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._configure_connection()
         self.create_tables()
+        restrict_file_permissions(self.db_path)
 
     def _configure_connection(self):
         cursor = self.conn.cursor()
@@ -147,6 +169,16 @@ class SOCDatabase:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    attempted_at REAL NOT NULL
+                )
+                """
+            )
+
             try:
                 cursor.execute(
                     """
@@ -159,6 +191,8 @@ class SOCDatabase:
                 pass
 
             self.conn.commit()
+
+    # ── users ────────────────────────────────────────────────────────
 
     def _normalize_user_record(self, row, fallback_username="", fallback_role="user"):
         if not row:
@@ -199,7 +233,7 @@ class SOCDatabase:
                 return self._normalize_user_record(row, fallback_username=normalized_username, fallback_role=role)
 
             now = self._now()
-            placeholder_secret = f"windows-auth::{normalized_username}::{secrets.token_urlsafe(24)}"
+            placeholder_secret = f"os-auth::{normalized_username}::{secrets.token_urlsafe(24)}"
             cursor = self.conn.cursor()
             cursor.execute(
                 """
@@ -211,7 +245,7 @@ class SOCDatabase:
             )
             self.conn.commit()
 
-        self.add_audit_event("windows_profile_synced", normalized_username, "Windows account mirrored into AutoSOC.")
+        self.add_audit_event("os_profile_synced", normalized_username, "OS account mirrored into AutoSOC.")
         return self._normalize_user_record(
             self.get_user_record(normalized_username),
             fallback_username=normalized_username,
@@ -261,16 +295,7 @@ class SOCDatabase:
     def authenticate(self, username, password):
         normalized_username = (username or "").strip()
         with self._lock:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                """
-                SELECT username, role, telegram_chat_id, telegram_user_id, password_hash
-                FROM users
-                WHERE username = ?
-                """,
-                (normalized_username,),
-            )
-            row = cursor.fetchone()
+            row = self.get_user_record(normalized_username)
             if not row:
                 return None
 
@@ -279,6 +304,7 @@ class SOCDatabase:
                 return None
 
             if needs_rehash(stored_hash):
+                cursor = self.conn.cursor()
                 cursor.execute(
                     "UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ?",
                     (hash_password(password), self._now(), normalized_username),
@@ -286,6 +312,57 @@ class SOCDatabase:
                 self.conn.commit()
 
             return self._normalize_user_record(row, fallback_username=normalized_username)
+
+    # ── login lockout ────────────────────────────────────────────────
+
+    def record_failed_login(self, username):
+        normalized = (username or "").strip()
+        if not normalized:
+            return
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "INSERT INTO login_attempts (username, attempted_at) VALUES (?, ?)",
+                (normalized, time.time()),
+            )
+            cursor.execute(
+                "DELETE FROM login_attempts WHERE attempted_at < ?",
+                (time.time() - LOCKOUT_WINDOW_SECONDS,),
+            )
+            self.conn.commit()
+
+    def clear_failed_logins(self, username):
+        normalized = (username or "").strip()
+        if not normalized:
+            return
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM login_attempts WHERE username = ?", (normalized,))
+            self.conn.commit()
+
+    def login_lockout_remaining(self, username) -> int:
+        """Seconds until the account may try again (0 when not locked)."""
+        normalized = (username or "").strip()
+        if not normalized:
+            return 0
+        cutoff = time.time() - LOCKOUT_WINDOW_SECONDS
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS attempts, MAX(attempted_at) AS latest
+                FROM login_attempts
+                WHERE username = ? AND attempted_at >= ?
+                """,
+                (normalized, cutoff),
+            )
+            row = cursor.fetchone()
+            if not row or (row["attempts"] or 0) < MAX_FAILED_LOGINS:
+                return 0
+            remaining = int(row["latest"] + LOCKOUT_WINDOW_SECONDS - time.time())
+            return max(remaining, 1)
+
+    # ── telegram binding ─────────────────────────────────────────────
 
     def update_user_telegram(self, username, telegram_chat_id, telegram_user_id=""):
         normalized_username = (username or "").strip()
@@ -354,21 +431,6 @@ class SOCDatabase:
                 )
             return cursor.fetchone() is None
 
-    def add_scan(self, target, risk, summary):
-        with self._lock:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "INSERT INTO scans (date, target, risk_level, summary) VALUES (?, ?, ?, ?)",
-                (self._now(), target, risk, summary),
-            )
-            self.conn.commit()
-
-    def get_all_scans(self):
-        with self._lock:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT date, target, risk_level, summary FROM scans ORDER BY id DESC")
-            return cursor.fetchall()
-
     def save_latest_telegram_user(
         self,
         telegram_user_id,
@@ -422,6 +484,8 @@ class SOCDatabase:
             )
             return cursor.fetchone()
 
+    # ── settings ─────────────────────────────────────────────────────
+
     def set_setting(self, key, value):
         with self._lock:
             cursor = self.conn.cursor()
@@ -452,6 +516,23 @@ class SOCDatabase:
             cursor = self.conn.cursor()
             cursor.execute("DELETE FROM app_settings WHERE key = ?", (str(key),))
             self.conn.commit()
+
+    # ── scans / events ───────────────────────────────────────────────
+
+    def add_scan(self, target, risk, summary):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "INSERT INTO scans (date, target, risk_level, summary) VALUES (?, ?, ?, ?)",
+                (self._now(), target, risk, summary),
+            )
+            self.conn.commit()
+
+    def get_all_scans(self):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT date, target, risk_level, summary FROM scans ORDER BY id DESC")
+            return cursor.fetchall()
 
     def add_security_event(self, event_type, severity, source, details):
         with self._lock:

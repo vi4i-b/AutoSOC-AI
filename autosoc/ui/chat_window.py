@@ -1,4 +1,7 @@
+"""Optional pop-out AI chat window (currently not opened from the dashboard)."""
+
 import customtkinter as ctk
+
 
 class AIChatWindow(ctk.CTkToplevel):
     def __init__(self, master, faq_items, on_ask_callback, current_output=""):

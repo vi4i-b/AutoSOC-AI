@@ -1,0 +1,4 @@
+# Build/packaging tools (not needed to run the app).
+-r requirements.txt
+pyinstaller==6.19.0
+pyinstaller-hooks-contrib==2026.3

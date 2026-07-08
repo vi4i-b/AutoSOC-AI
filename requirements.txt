@@ -1,18 +1,9 @@
-﻿altgraph==0.17.5
-certifi==2026.2.25
-charset-normalizer==3.4.6
+# Runtime dependencies. Platform-specific packages are guarded with markers.
 customtkinter==5.2.2
 darkdetect==0.8.0
-idna==3.11
-packaging==26.0
-pefile==2024.8.26
-pyinstaller==6.19.0
-pyinstaller-hooks-contrib==2026.3
-pyTelegramBotAPI==4.32.0
-python-nmap==0.7.1
-pywin32==311
-pywin32-ctypes==0.2.3
 requests==2.32.5
+python-nmap==0.7.1
 scapy==2.7.0
-setuptools==82.0.1
-urllib3==2.6.3
+
+# Windows-only: Security event log monitoring (Event ID 4625).
+pywin32==311; sys_platform == "win32"
