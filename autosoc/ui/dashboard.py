@@ -25,6 +25,7 @@ from autosoc.database import SOCDatabase
 from autosoc.env import load_env_file
 from autosoc.guard import NetworkGuard
 from autosoc.logging_setup import get_logger
+from autosoc.phishing import PhishingAnalyzer
 from autosoc.ports import DEFAULT_RISKY_PORTS, TRACKED_PORTS
 from autosoc.scanner import NetworkScanner, count_open_ports, summarize_single_port_state
 from autosoc.system import hardening
@@ -72,9 +73,13 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
 
         self.ai_expert = AISecurityExpert()
         self.nvidia_ai = NvidiaSecurityAI()
+        self._load_nvidia_credentials()
+        self.phishing_analyzer = PhishingAnalyzer(ai_client=self.nvidia_ai)
+        self.last_phishing_report = None
         self.analyzer = RiskAnalyzer()
         self.guard = NetworkGuard(self.on_threat_detected)
         self.port_canary = PortCanary(self.on_canary_trip)
+        self.soc_console = None
         self.last_scan_data = []
         self.scan_summary = ""
         self.ai_loader_job = None
@@ -1184,3 +1189,259 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         txt.insert("end", "\n--- Audit Events ---\n")
         for row in self.db.get_recent_audit_events():
             txt.insert("end", f"{row[0]} | {row[1]} | {row[2]} | {row[3]}\n")
+
+    # ── NVIDIA AI engine key ─────────────────────────────────────────
+
+    def _load_nvidia_credentials(self):
+        """Apply a saved NVIDIA key/model from settings on top of any .env value."""
+        saved_key = (self.db.get_setting("nvidia_api_key", "") or "").strip()
+        saved_model = (self.db.get_setting("nvidia_model", "") or "").strip()
+        if saved_key or saved_model:
+            self.nvidia_ai.configure(
+                api_key=saved_key or None,
+                model=saved_model or None,
+            )
+        self.nvidia_api_key = self.nvidia_ai.api_key
+        self.nvidia_model = self.nvidia_ai.model
+
+    def toggle_nvidia_key_visibility(self):
+        showing = self.nvidia_key_entry.cget("show") == ""
+        self.nvidia_key_entry.configure(show="•" if showing else "")
+        self.btn_show_key.configure(text="Show" if showing else "Hide")
+
+    def save_nvidia_key(self):
+        key = self.nvidia_key_entry.get().strip()
+        model = self.nvidia_model_entry.get().strip()
+        self.nvidia_ai.configure(api_key=key, model=model or None)
+        self.nvidia_api_key = self.nvidia_ai.api_key
+        self.nvidia_model = self.nvidia_ai.model
+        # The API key is a secret; it is stored in the per-user, owner-only DB.
+        self.db.set_setting("nvidia_api_key", key)
+        if model:
+            self.db.set_setting("nvidia_model", model)
+        self.db.add_audit_event(
+            "nvidia_key_updated",
+            self.current_user.get("username", "local_operator"),
+            f"NVIDIA AI engine key {'set' if key else 'cleared'}; model={self.nvidia_ai.model}.",
+        )
+        self._refresh_nvidia_key_status()
+        if key:
+            threading.Thread(target=self._verify_nvidia_key, daemon=True).start()
+
+    def _verify_nvidia_key(self):
+        answer = self.nvidia_ai.answer_security_question("Reply with the single word: OK")
+        if answer:
+            self._ui(lambda: self.nvidia_key_status.configure(
+                text=f"AI engine active · model {self.nvidia_ai.model}", text_color=theme.STATUS_GOOD))
+        else:
+            reason = self.nvidia_ai.last_error or "no response"
+            self._ui(lambda: self.nvidia_key_status.configure(
+                text=f"Key saved but test failed: {reason}", text_color=theme.STATUS_WARN))
+
+    def _refresh_nvidia_key_status(self):
+        if not hasattr(self, "nvidia_key_status"):
+            return
+        if self.nvidia_ai.enabled:
+            self.nvidia_key_status.configure(
+                text=f"AI engine configured · model {self.nvidia_ai.model}",
+                text_color=theme.STATUS_GOOD,
+            )
+        else:
+            self.nvidia_key_status.configure(
+                text="No key set — copilot and AI phishing verdict run in offline/heuristic mode.",
+                text_color=theme.TEXT_FAINT,
+            )
+
+    # ── Anti-phishing tab ────────────────────────────────────────────
+
+    def analyze_phishing_url(self, deep=True):
+        raw_url = self.phishing_url_entry.get().strip()
+        if not raw_url:
+            self.phishing_status.configure(text="Enter a URL first.", text_color=theme.STATUS_WARN)
+            return
+
+        self.btn_phishing_analyze.configure(state="disabled")
+        self.btn_phishing_quick.configure(state="disabled")
+        self.btn_phishing_to_case.configure(state="disabled")
+        mode = "Full analysis (fetching page, TLS, spelling, AI)" if deep else "Quick offline heuristics"
+        self.phishing_status.configure(text=f"{mode} for {raw_url} …", text_color=theme.STATUS_WARN)
+        threading.Thread(target=self._run_phishing_analysis, args=(raw_url, deep), daemon=True).start()
+
+    def _run_phishing_analysis(self, raw_url, deep):
+        try:
+            if deep:
+                report = self.phishing_analyzer.full_scan(raw_url, use_ai=self.nvidia_ai.enabled)
+            else:
+                report = self.phishing_analyzer.quick_scan(raw_url)
+        except Exception as exc:
+            log.exception("Phishing analysis failed for %s", raw_url)
+            self._ui(lambda: self.phishing_status.configure(
+                text=f"Analysis failed: {exc}", text_color=theme.STATUS_ERROR))
+            self._ui(lambda: self._reset_phishing_buttons())
+            return
+
+        self.last_phishing_report = report
+        self.db.add_audit_event(
+            "phishing_scan",
+            self.current_user.get("username", "local_operator"),
+            f"URL: {report.url}. Score: {report.score}. Verdict: {report.verdict}.",
+        )
+        if report.score >= 55:
+            self.db.add_security_event(
+                "phishing_suspected", "High" if report.score >= 80 else "Medium",
+                report.host or report.url,
+                f"Phishing analysis flagged {report.url} (score {report.score}, {report.verdict}).",
+            )
+        self._ui(lambda: self._render_phishing_report(report))
+
+    def _reset_phishing_buttons(self):
+        self.btn_phishing_analyze.configure(state="normal")
+        self.btn_phishing_quick.configure(state="normal")
+
+    def _render_phishing_report(self, report):
+        self._reset_phishing_buttons()
+
+        for child in self.phishing_signals_frame.winfo_children():
+            child.destroy()
+
+        color = self._phishing_verdict_color(report.score)
+        self.phishing_score_label.configure(text=str(report.score), text_color=color)
+        self.phishing_verdict_label.configure(text=report.verdict.upper(), text_color=color)
+        self.phishing_score_bar.configure(progress_color=color)
+        self.phishing_score_bar.set(report.score / 100)
+
+        detail = report.verdict_detail
+        if report.final_url and report.final_url != report.url:
+            detail += f"\nFinal URL: {report.final_url}"
+        if report.fetch_error:
+            detail += f"\nFetch note: {report.fetch_error}"
+        self.phishing_verdict_detail.configure(text=detail)
+
+        hits = report.hits()
+        reassuring = [s for s in report.signals if not s.hit]
+        if not hits and not reassuring:
+            ctk.CTkLabel(
+                self.phishing_signals_frame,
+                text="No signals produced.",
+                text_color=theme.TEXT_MUTED,
+                font=ctk.CTkFont(size=12),
+            ).grid(row=0, column=0, sticky="w", padx=12, pady=12)
+        row_index = 0
+        for signal in hits:
+            self._phishing_signal_row(row_index, signal, risky=True)
+            row_index += 1
+        for signal in reassuring:
+            self._phishing_signal_row(row_index, signal, risky=False)
+            row_index += 1
+
+        self.phishing_ai_box.configure(state="normal")
+        self.phishing_ai_box.delete("0.0", "end")
+        if report.ai_used and report.ai_summary:
+            self.phishing_ai_box.insert("end", f"AI verdict:\n{report.ai_summary}")
+        elif self.nvidia_ai.enabled:
+            self.phishing_ai_box.insert("end", "AI verdict unavailable (model returned nothing or quick scan was used).")
+        else:
+            self.phishing_ai_box.insert("end", "AI verdict disabled — add a NVIDIA API key in the left panel for a deep language check of the page text.")
+        self.phishing_ai_box.configure(state="disabled")
+
+        self.btn_phishing_to_case.configure(state="normal")
+        self.phishing_status.configure(
+            text=f"Done · {len(hits)} risk signal(s) · score {report.score}/100 ({report.verdict}).",
+            text_color=color,
+        )
+
+    def _phishing_signal_row(self, row_index, signal, risky):
+        frame = ctk.CTkFrame(self.phishing_signals_frame, fg_color="transparent")
+        frame.grid(row=row_index, column=0, sticky="ew", padx=10, pady=(6, 0))
+        frame.grid_columnconfigure(1, weight=1)
+
+        dot_color = self._phishing_category_color(signal.category) if risky else theme.ACCENT_GREEN
+        ctk.CTkLabel(frame, text="●", text_color=dot_color, font=ctk.CTkFont(size=14)).grid(
+            row=0, column=0, sticky="nw", padx=(0, 8))
+
+        text_stack = ctk.CTkFrame(frame, fg_color="transparent")
+        text_stack.grid(row=0, column=1, sticky="ew")
+        weight_txt = f"  (+{signal.weight})" if risky else "  (ok)"
+        ctk.CTkLabel(
+            text_stack,
+            text=f"[{signal.category}] {signal.title}{weight_txt}",
+            text_color=theme.TEXT_SOFT if risky else theme.TEXT_MUTED,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        ctk.CTkLabel(
+            text_stack,
+            text=signal.detail,
+            text_color="#85a3bd",
+            font=ctk.CTkFont(size=11),
+            wraplength=430,
+            justify="left",
+            anchor="w",
+        ).pack(anchor="w", fill="x")
+
+    @staticmethod
+    def _phishing_verdict_color(score):
+        if score >= 80:
+            return theme.STATUS_DANGER
+        if score >= 55:
+            return "#ff9f6e"
+        if score >= 30:
+            return theme.ACCENT_YELLOW
+        return theme.ACCENT_GREEN
+
+    @staticmethod
+    def _phishing_category_color(category):
+        return {
+            "URL": theme.ACCENT_CYAN,
+            "TLS": "#c58fff",
+            "Content": "#ff9f6e",
+            "Spelling": theme.ACCENT_YELLOW,
+            "Reputation": theme.STATUS_DANGER,
+            "AI": "#8fbfff",
+        }.get(category, theme.ACCENT_YELLOW)
+
+    def send_phishing_to_case(self):
+        report = self.last_phishing_report
+        if not report:
+            return
+        top_signals = "; ".join(f"{s.title}" for s in report.hits()[:6]) or "no risk signals"
+        summary = (
+            f"Phishing analysis of {report.url}\n"
+            f"Score: {report.score}/100 ({report.verdict})\n"
+            f"Host: {report.host}\n"
+            f"Top signals: {top_signals}"
+        )
+        if report.ai_summary:
+            summary += f"\nAI: {report.ai_summary}"
+        severity = "Critical" if report.score >= 80 else "High" if report.score >= 55 else "Medium"
+        incident_id = self.db.create_incident(
+            title=f"Suspected phishing: {report.host or report.url}",
+            severity=severity,
+            source="anti-phishing",
+            summary=summary,
+            created_by=self.current_user.get("username", "local_operator"),
+        )
+        self.db.add_audit_event(
+            "incident_created",
+            self.current_user.get("username", "local_operator"),
+            f"Incident #{incident_id} from phishing analysis of {report.url}.",
+        )
+        self.phishing_status.configure(
+            text=f"Saved as SOC incident #{incident_id}. Open the SOC Console to triage it.",
+            text_color=theme.STATUS_GOOD,
+        )
+        if self.soc_console is not None and self.soc_console.winfo_exists():
+            self.soc_console.refresh_all()
+
+    # ── SOC console ──────────────────────────────────────────────────
+
+    def open_soc_console(self):
+        from autosoc.ui.soc_console import SOCConsoleWindow
+
+        if self.soc_console is not None and self.soc_console.winfo_exists():
+            self.soc_console.deiconify()
+            self.soc_console.lift()
+            self.soc_console.focus_force()
+            return
+        self.soc_console = SOCConsoleWindow(self, self.db, self.current_user)

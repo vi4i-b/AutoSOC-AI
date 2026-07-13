@@ -195,8 +195,106 @@ class DashboardLayoutMixin:
         )
         self.prevention_status.pack(anchor="w", padx=16, pady=(0, 16))
 
+        self._build_ai_engine_card(default_wraplength)
         self._build_ports_card(default_wraplength)
         self._build_telegram_card(default_wraplength)
+
+    def _build_ai_engine_card(self, default_wraplength):
+        card = ctk.CTkFrame(self.sidebar_scroll, fg_color=theme.BG_CARD, corner_radius=18)
+        card.pack(fill="x", padx=22, pady=(0, 16))
+
+        ctk.CTkLabel(
+            card,
+            text="AI Engine (NVIDIA)",
+            text_color="#e8f1f8",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(anchor="w", padx=16, pady=(16, 6))
+
+        ctk.CTkLabel(
+            card,
+            text="Paste your NVIDIA API key to power the security copilot and AI phishing verdicts.",
+            text_color=theme.TEXT_FAINT,
+            font=ctk.CTkFont(size=11),
+            wraplength=default_wraplength,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 8))
+
+        self.nvidia_key_entry = ctk.CTkEntry(
+            card,
+            height=38,
+            corner_radius=12,
+            placeholder_text="nvapi-...",
+            show="•",
+            fg_color=theme.BG_FIELD,
+            border_color=theme.FIELD_BORDER,
+        )
+        self.nvidia_key_entry.pack(fill="x", padx=16, pady=(0, 8))
+        if getattr(self, "nvidia_api_key", ""):
+            self.nvidia_key_entry.insert(0, self.nvidia_api_key)
+
+        self.nvidia_model_entry = ctk.CTkEntry(
+            card,
+            height=38,
+            corner_radius=12,
+            placeholder_text="Model (e.g. deepseek-ai/deepseek-v3)",
+            fg_color=theme.BG_FIELD,
+            border_color=theme.FIELD_BORDER,
+        )
+        self.nvidia_model_entry.pack(fill="x", padx=16, pady=(0, 8))
+        if getattr(self, "nvidia_model", ""):
+            self.nvidia_model_entry.insert(0, self.nvidia_model)
+
+        key_btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        key_btn_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        self.btn_show_key = ctk.CTkButton(
+            key_btn_row,
+            text="Show",
+            width=70,
+            height=34,
+            corner_radius=12,
+            fg_color="transparent",
+            hover_color=theme.BTN_OUTLINE_HOVER,
+            border_width=1,
+            border_color=theme.BTN_OUTLINE_BORDER,
+            command=self.toggle_nvidia_key_visibility,
+        )
+        self.btn_show_key.pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            key_btn_row,
+            text="Save & Apply",
+            height=34,
+            corner_radius=12,
+            fg_color=theme.ACCENT_BLUE,
+            hover_color=theme.ACCENT_BLUE_HOVER,
+            command=self.save_nvidia_key,
+        ).pack(side="left", fill="x", expand=True)
+
+        self.nvidia_key_status = ctk.CTkLabel(
+            card,
+            text="",
+            text_color=theme.TEXT_FAINT,
+            font=ctk.CTkFont(size=11),
+            wraplength=default_wraplength,
+            justify="left",
+        )
+        self.nvidia_key_status.pack(anchor="w", padx=16, pady=(0, 8))
+        self._refresh_nvidia_key_status()
+
+        ctk.CTkButton(
+            card,
+            text="Open SOC Console",
+            height=38,
+            corner_radius=12,
+            fg_color="#243a2f",
+            hover_color="#2c4a3a",
+            border_width=1,
+            border_color="#2f6f52",
+            text_color="#9ce0bd",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self.open_soc_console,
+        ).pack(fill="x", padx=16, pady=(0, 16))
 
     def _build_ports_card(self, default_wraplength):
         ports_card = ctk.CTkFrame(self.sidebar_scroll, fg_color=theme.BG_CARD, corner_radius=18)
@@ -712,7 +810,7 @@ class DashboardLayoutMixin:
         ).pack(anchor="w")
         ctk.CTkLabel(
             header,
-            text="Inspect suspicious URLs, preview site content, and review risk signals",
+            text="Analyze a URL: structure, TLS certificate, page content, spelling, and an AI verdict",
             font=ctk.CTkFont(size=13),
             text_color="#85a3bd",
         ).pack(anchor="w", pady=(4, 0))
@@ -720,9 +818,9 @@ class DashboardLayoutMixin:
         body = ctk.CTkFrame(self.new_tab_frame, fg_color=theme.BG_SIDEBAR, corner_radius=22)
         body.grid(row=2, column=0, sticky="nsew", padx=26, pady=(0, 26))
         body.grid_columnconfigure(0, weight=1)
-        body.grid_rowconfigure(1, weight=6)
-        body.grid_rowconfigure(2, weight=3)
+        body.grid_rowconfigure(1, weight=1)
 
+        # ── URL bar ──────────────────────────────────────────────────
         url_bar = ctk.CTkFrame(body, fg_color="transparent")
         url_bar.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 12))
         url_bar.grid_columnconfigure(0, weight=1)
@@ -731,195 +829,162 @@ class DashboardLayoutMixin:
             url_bar,
             height=46,
             corner_radius=14,
-            placeholder_text="https://example.com",
+            placeholder_text="https://example.com/login",
             fg_color=theme.BG_CONSOLE,
             border_color="#2c445b",
             text_color=theme.TEXT_PRIMARY,
             font=ctk.CTkFont(size=14),
         )
         self.phishing_url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        self.phishing_url_entry.bind("<Return>", lambda e: self.analyze_phishing_url(deep=True))
+
+        self.btn_phishing_quick = ctk.CTkButton(
+            url_bar,
+            text="Quick Check",
+            width=120,
+            height=46,
+            corner_radius=14,
+            fg_color=theme.BTN_NEUTRAL,
+            hover_color=theme.BTN_NEUTRAL_HOVER,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=lambda: self.analyze_phishing_url(deep=False),
+        )
+        self.btn_phishing_quick.grid(row=0, column=1, sticky="e", padx=(0, 8))
 
         self.btn_phishing_analyze = ctk.CTkButton(
             url_bar,
-            text="Analyze",
+            text="Full Analyze",
             width=138,
             height=46,
             corner_radius=14,
             fg_color=theme.ACCENT_BLUE,
             hover_color=theme.ACCENT_BLUE_HOVER,
             font=ctk.CTkFont(size=14, weight="bold"),
+            command=lambda: self.analyze_phishing_url(deep=True),
         )
-        self.btn_phishing_analyze.grid(row=0, column=1, sticky="e", padx=(0, 10))
+        self.btn_phishing_analyze.grid(row=0, column=2, sticky="e", padx=(0, 8))
 
-        self.btn_phishing_ai = ctk.CTkButton(
-            url_bar,
-            text="AI",
-            width=56,
-            height=46,
-            corner_radius=14,
-            fg_color="#112033",
-            hover_color="#19324d",
-            border_width=1,
-            border_color="#315274",
-            text_color=theme.ACCENT_CYAN,
-            font=ctk.CTkFont(size=14, weight="bold"),
+        self.phishing_status = ctk.CTkLabel(
+            body,
+            text="Enter a URL and run Quick Check (offline heuristics) or Full Analyze (fetches the page, TLS, spelling, AI).",
+            text_color=theme.TEXT_MUTED,
+            font=ctk.CTkFont(size=11),
+            anchor="w",
+            justify="left",
         )
-        self.btn_phishing_ai.grid(row=0, column=2, sticky="e")
+        self.phishing_status.grid(row=0, column=0, sticky="ew", padx=18, pady=(70, 0))
 
-        browser_card = ctk.CTkFrame(body, fg_color=theme.BG_PANEL, corner_radius=18)
-        browser_card.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 12))
-        browser_card.grid_columnconfigure(0, weight=1)
-        browser_card.grid_rowconfigure(1, weight=1)
+        # ── Result area: left signals list, right verdict/score ──────
+        result_area = ctk.CTkFrame(body, fg_color="transparent")
+        result_area.grid(row=1, column=0, sticky="nsew", padx=18, pady=(8, 18))
+        result_area.grid_columnconfigure(0, weight=3)
+        result_area.grid_columnconfigure(1, weight=2)
+        result_area.grid_rowconfigure(0, weight=1)
 
-        browser_header = ctk.CTkFrame(browser_card, fg_color="transparent")
-        browser_header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
-        browser_header.grid_columnconfigure(1, weight=1)
-
-        dot_row = ctk.CTkFrame(browser_header, fg_color="transparent")
-        dot_row.grid(row=0, column=0, sticky="w")
-        for color in (theme.ACCENT_RED, theme.ACCENT_YELLOW, theme.ACCENT_GREEN):
-            ctk.CTkLabel(
-                dot_row,
-                text="●",
-                text_color=color,
-                font=ctk.CTkFont(size=13),
-            ).pack(side="left", padx=(0, 5))
+        # Signals (scrollable)
+        signals_card = ctk.CTkFrame(result_area, fg_color=theme.BG_PANEL, corner_radius=18)
+        signals_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        signals_card.grid_columnconfigure(0, weight=1)
+        signals_card.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            browser_header,
-            text="Preview sandbox",
-            text_color="#85a3bd",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).grid(row=0, column=1, sticky="w", padx=10)
-
-        ctk.CTkLabel(
-            browser_header,
-            text="Not connected",
-            text_color=theme.ACCENT_YELLOW,
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).grid(row=0, column=2, sticky="e")
-
-        preview = ctk.CTkFrame(browser_card, fg_color=theme.BG_CONSOLE, corner_radius=16,
-                               border_width=1, border_color="#1f3449")
-        preview.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        preview.grid_columnconfigure(0, weight=1)
-        preview.grid_rowconfigure(0, weight=1)
-
-        preview_stack = ctk.CTkFrame(preview, fg_color="transparent")
-        preview_stack.grid(row=0, column=0)
-
-        ctk.CTkLabel(
-            preview_stack,
-            text="Website preview",
+            signals_card,
+            text="Detection Signals",
             text_color=theme.TEXT_PRIMARY,
-            font=ctk.CTkFont(size=22, weight="bold"),
-        ).pack()
-        ctk.CTkLabel(
-            preview_stack,
-            text="The embedded browser surface will render the submitted URL here.",
-            text_color="#85a3bd",
-            font=ctk.CTkFont(size=13),
-        ).pack(pady=(8, 0))
-
-        analysis_card = ctk.CTkFrame(body, fg_color=theme.BG_PANEL, corner_radius=18)
-        analysis_card.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
-        analysis_card.grid_columnconfigure(0, weight=3)
-        analysis_card.grid_columnconfigure(1, weight=2)
-        analysis_card.grid_rowconfigure(0, weight=1)
-
-        findings = ctk.CTkFrame(analysis_card, fg_color=theme.BG_CONSOLE, corner_radius=16,
-                                border_width=1, border_color="#1f3449")
-        findings.grid(row=0, column=0, sticky="nsew", padx=(16, 10), pady=16)
-        findings.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            findings,
-            text="Site Risk Analysis",
-            text_color=theme.TEXT_PRIMARY,
-            font=ctk.CTkFont(size=17, weight="bold"),
+            font=ctk.CTkFont(size=16, weight="bold"),
         ).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
 
-        signals = [
-            ("Domain reputation", "No known blocklist hits in the current design state.", theme.ACCENT_GREEN),
-            ("Login form behavior", "Form collection points will be inspected after backend integration.", theme.ACCENT_YELLOW),
-            ("Certificate check", "TLS and issuer details will appear here.", theme.ACCENT_CYAN),
-            ("Content indicators", "Brand impersonation, urgency language, and redirects will be scored.", "#ff9f6e"),
-        ]
-        for row, (label, detail, color) in enumerate(signals, start=1):
-            signal = ctk.CTkFrame(findings, fg_color="transparent")
-            signal.grid(row=row, column=0, sticky="ew", padx=16, pady=(0, 8))
-            ctk.CTkLabel(signal, text="●", text_color=color, font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 8))
-            text_stack = ctk.CTkFrame(signal, fg_color="transparent")
-            text_stack.pack(side="left", fill="x", expand=True)
-            ctk.CTkLabel(
-                text_stack,
-                text=label,
-                text_color=theme.TEXT_SOFT,
-                font=ctk.CTkFont(size=12, weight="bold"),
-            ).pack(anchor="w")
-            ctk.CTkLabel(
-                text_stack,
-                text=detail,
-                text_color="#85a3bd",
-                font=ctk.CTkFont(size=11),
-                wraplength=520,
-                justify="left",
-            ).pack(anchor="w")
+        self.phishing_signals_frame = ctk.CTkScrollableFrame(
+            signals_card,
+            fg_color=theme.BG_CONSOLE,
+            corner_radius=14,
+            scrollbar_button_color="#23384d",
+            scrollbar_button_hover_color=theme.ACCENT_BLUE,
+        )
+        self.phishing_signals_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        self.phishing_signals_frame.grid_columnconfigure(0, weight=1)
 
-        score_card = ctk.CTkFrame(analysis_card, fg_color=theme.BG_CONSOLE, corner_radius=16,
-                                  border_width=1, border_color="#1f3449")
-        score_card.grid(row=0, column=1, sticky="nsew", padx=(10, 16), pady=16)
+        self._phishing_placeholder = ctk.CTkLabel(
+            self.phishing_signals_frame,
+            text="No analysis yet. Results will appear here.",
+            text_color=theme.TEXT_MUTED,
+            font=ctk.CTkFont(size=12),
+        )
+        self._phishing_placeholder.grid(row=0, column=0, sticky="w", padx=12, pady=12)
+
+        # Verdict / score
+        score_card = ctk.CTkFrame(result_area, fg_color=theme.BG_PANEL, corner_radius=18)
+        score_card.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         score_card.grid_columnconfigure(0, weight=1)
+        score_card.grid_rowconfigure(6, weight=1)
 
         ctk.CTkLabel(
             score_card,
-            text="Safety Score",
+            text="Risk Score",
             text_color=theme.TEXT_PRIMARY,
-            font=ctk.CTkFont(size=17, weight="bold"),
+            font=ctk.CTkFont(size=16, weight="bold"),
         ).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 4))
 
-        ctk.CTkLabel(
+        self.phishing_score_label = ctk.CTkLabel(
             score_card,
-            text="64%",
-            text_color=theme.ACCENT_YELLOW,
+            text="—",
+            text_color=theme.TEXT_MUTED,
             font=ctk.CTkFont(size=48, weight="bold"),
-        ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 0))
+        )
+        self.phishing_score_label.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 0))
 
-        ctk.CTkLabel(
+        self.phishing_verdict_label = ctk.CTkLabel(
             score_card,
-            text="Moderate confidence",
-            text_color="#85a3bd",
-            font=ctk.CTkFont(size=12),
-        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 12))
+            text="Awaiting analysis",
+            text_color=theme.TEXT_MUTED,
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        self.phishing_verdict_label.grid(row=2, column=0, sticky="w", padx=16, pady=(0, 10))
 
-        score_bar = ctk.CTkProgressBar(
+        self.phishing_score_bar = ctk.CTkProgressBar(
             score_card,
             height=14,
             corner_radius=8,
             fg_color="#142433",
-            progress_color=theme.ACCENT_YELLOW,
+            progress_color=theme.BTN_NEUTRAL,
         )
-        score_bar.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
-        score_bar.set(0.64)
+        self.phishing_score_bar.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
+        self.phishing_score_bar.set(0)
 
-        ctk.CTkLabel(
+        self.phishing_verdict_detail = ctk.CTkLabel(
             score_card,
-            text="Verdict",
-            text_color=theme.TEXT_SOFT,
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).grid(row=4, column=0, sticky="w", padx=16, pady=(4, 4))
-
-        ctk.CTkLabel(
-            score_card,
-            text=(
-                "The site is not marked dangerous yet, but several checks are pending. "
-                "Treat the URL as suspicious until analysis completes."
-            ),
+            text="Run an analysis to see the verdict and a breakdown of contributing signals.",
             text_color="#9fb4c8",
             font=ctk.CTkFont(size=12),
-            wraplength=300,
+            wraplength=280,
             justify="left",
-        ).grid(row=5, column=0, sticky="nw", padx=16, pady=(0, 16))
+        )
+        self.phishing_verdict_detail.grid(row=4, column=0, sticky="nw", padx=16, pady=(0, 12))
+
+        self.phishing_ai_box = ctk.CTkTextbox(
+            score_card,
+            height=150,
+            fg_color=theme.BG_CONSOLE,
+            corner_radius=14,
+            text_color=theme.TEXT_SOFT,
+            font=ctk.CTkFont(size=12),
+            wrap="word",
+        )
+        self.phishing_ai_box.grid(row=5, column=0, sticky="nsew", padx=16, pady=(0, 12))
+        self.phishing_ai_box.insert("end", "AI verdict will appear here when a NVIDIA model key is configured (left panel).")
+        self.phishing_ai_box.configure(state="disabled")
+
+        self.btn_phishing_to_case = ctk.CTkButton(
+            score_card,
+            text="Send to SOC Cases",
+            height=38,
+            corner_radius=12,
+            fg_color=theme.ACCENT_RED_DARK,
+            hover_color=theme.ACCENT_RED_DARK_HOVER,
+            state="disabled",
+            command=self.send_phishing_to_case,
+        )
+        self.btn_phishing_to_case.grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 16))
 
     def _metric_card(self, parent, column, label, value, accent):
         card = ctk.CTkFrame(parent, fg_color=theme.BG_SIDEBAR, corner_radius=20)

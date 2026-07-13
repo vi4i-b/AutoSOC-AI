@@ -179,6 +179,83 @@ class SOCDatabase:
                 """
             )
 
+            # ── SOC console tables ──────────────────────────────────
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    severity TEXT DEFAULT 'Medium',
+                    status TEXT DEFAULT 'Open',
+                    source TEXT DEFAULT '',
+                    assignee TEXT DEFAULT '',
+                    mitre TEXT DEFAULT '',
+                    summary TEXT DEFAULT '',
+                    created_by TEXT DEFAULT '',
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS incident_notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    incident_id INTEGER NOT NULL,
+                    author TEXT DEFAULT '',
+                    note TEXT NOT NULL,
+                    created_at TEXT,
+                    FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS iocs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ioc_type TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    severity TEXT DEFAULT 'Medium',
+                    note TEXT DEFAULT '',
+                    added_by TEXT DEFAULT '',
+                    created_at TEXT,
+                    UNIQUE(ioc_type, value)
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT UNIQUE NOT NULL,
+                    hostname TEXT DEFAULT '',
+                    platform TEXT DEFAULT '',
+                    ip_address TEXT DEFAULT '',
+                    status TEXT DEFAULT 'pending',
+                    enrollment_token TEXT DEFAULT '',
+                    labels TEXT DEFAULT '',
+                    last_seen TEXT DEFAULT '',
+                    created_at TEXT
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ingested_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT DEFAULT '',
+                    source TEXT DEFAULT '',
+                    severity TEXT DEFAULT 'info',
+                    message TEXT NOT NULL,
+                    created_at TEXT
+                )
+                """
+            )
+
             try:
                 cursor.execute(
                     """
@@ -585,3 +662,239 @@ class SOCDatabase:
                 (int(limit),),
             )
             return cursor.fetchall()
+
+    # ── incidents ────────────────────────────────────────────────────
+
+    def create_incident(self, title, severity="Medium", source="", summary="", created_by="", mitre=""):
+        with self._lock:
+            now = self._now()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO incidents (
+                    title, severity, status, source, assignee, mitre, summary, created_by, created_at, updated_at
+                ) VALUES (?, ?, 'Open', ?, '', ?, ?, ?, ?, ?)
+                """,
+                (title, severity, source, mitre, summary, created_by, now, now),
+            )
+            self.conn.commit()
+            return cursor.lastrowid
+
+    def list_incidents(self, status=None, limit=200):
+        with self._lock:
+            cursor = self.conn.cursor()
+            if status and status != "All":
+                cursor.execute(
+                    """
+                    SELECT id, title, severity, status, source, assignee, mitre, summary, created_at, updated_at
+                    FROM incidents WHERE status = ? ORDER BY id DESC LIMIT ?
+                    """,
+                    (status, int(limit)),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, title, severity, status, source, assignee, mitre, summary, created_at, updated_at
+                    FROM incidents ORDER BY id DESC LIMIT ?
+                    """,
+                    (int(limit),),
+                )
+            return cursor.fetchall()
+
+    def get_incident(self, incident_id):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, title, severity, status, source, assignee, mitre, summary, created_by, created_at, updated_at
+                FROM incidents WHERE id = ?
+                """,
+                (int(incident_id),),
+            )
+            return cursor.fetchone()
+
+    def update_incident(self, incident_id, **fields):
+        allowed = {"title", "severity", "status", "assignee", "mitre", "summary", "source"}
+        updates = {key: value for key, value in fields.items() if key in allowed}
+        if not updates:
+            return False
+        with self._lock:
+            assignments = ", ".join(f"{key} = ?" for key in updates)
+            values = list(updates.values()) + [self._now(), int(incident_id)]
+            cursor = self.conn.cursor()
+            cursor.execute(
+                f"UPDATE incidents SET {assignments}, updated_at = ? WHERE id = ?",
+                values,
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def add_incident_note(self, incident_id, note, author=""):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "INSERT INTO incident_notes (incident_id, author, note, created_at) VALUES (?, ?, ?, ?)",
+                (int(incident_id), author, note, self._now()),
+            )
+            cursor.execute(
+                "UPDATE incidents SET updated_at = ? WHERE id = ?",
+                (self._now(), int(incident_id)),
+            )
+            self.conn.commit()
+            return cursor.lastrowid
+
+    def get_incident_notes(self, incident_id):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT created_at, author, note FROM incident_notes WHERE incident_id = ? ORDER BY id ASC",
+                (int(incident_id),),
+            )
+            return cursor.fetchall()
+
+    def incident_status_counts(self):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT status, COUNT(*) FROM incidents GROUP BY status")
+            return {row[0]: row[1] for row in cursor.fetchall()}
+
+    # ── IOCs ─────────────────────────────────────────────────────────
+
+    def add_ioc(self, ioc_type, value, severity="Medium", note="", added_by=""):
+        with self._lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO iocs (ioc_type, value, severity, note, added_by, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (ioc_type, value.strip(), severity, note, added_by, self._now()),
+                )
+                self.conn.commit()
+                return cursor.lastrowid
+            except sqlite3.IntegrityError:
+                return None
+
+    def list_iocs(self, limit=500):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT id, ioc_type, value, severity, note, added_by, created_at FROM iocs ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            )
+            return cursor.fetchall()
+
+    def delete_ioc(self, ioc_id):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM iocs WHERE id = ?", (int(ioc_id),))
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def match_iocs(self, value):
+        value = (value or "").strip()
+        if not value:
+            return []
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT id, ioc_type, value, severity, note FROM iocs WHERE value = ?",
+                (value,),
+            )
+            return cursor.fetchall()
+
+    # ── agents / endpoints ───────────────────────────────────────────
+
+    def register_agent(self, agent_id, hostname="", platform="", ip_address="", enrollment_token="", labels=""):
+        with self._lock:
+            now = self._now()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO agents (agent_id, hostname, platform, ip_address, status, enrollment_token, labels, last_seen, created_at)
+                VALUES (?, ?, ?, ?, 'pending', ?, ?, '', ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    hostname = excluded.hostname,
+                    platform = excluded.platform,
+                    ip_address = excluded.ip_address,
+                    labels = excluded.labels
+                """,
+                (agent_id, hostname, platform, ip_address, enrollment_token, labels, now),
+            )
+            self.conn.commit()
+            return cursor.lastrowid
+
+    def list_agents(self):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, agent_id, hostname, platform, ip_address, status, labels, last_seen, created_at
+                FROM agents ORDER BY id DESC
+                """
+            )
+            return cursor.fetchall()
+
+    def set_agent_status(self, agent_id, status):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE agents SET status = ?, last_seen = ? WHERE agent_id = ?",
+                (status, self._now(), agent_id),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_agent(self, agent_id):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM agents WHERE agent_id = ?", (agent_id,))
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    # ── ingested logs ────────────────────────────────────────────────
+
+    def add_ingested_log(self, message, agent_id="", source="", severity="info"):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "INSERT INTO ingested_logs (agent_id, source, severity, message, created_at) VALUES (?, ?, ?, ?, ?)",
+                (agent_id, source, severity, message, self._now()),
+            )
+            self.conn.commit()
+            return cursor.lastrowid
+
+    def search_logs(self, query="", limit=300):
+        query = (query or "").strip()
+        with self._lock:
+            cursor = self.conn.cursor()
+            if query:
+                like = f"%{query}%"
+                cursor.execute(
+                    """
+                    SELECT created_at, agent_id, source, severity, message
+                    FROM ingested_logs
+                    WHERE message LIKE ? OR source LIKE ? OR agent_id LIKE ?
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (like, like, like, int(limit)),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT created_at, agent_id, source, severity, message
+                    FROM ingested_logs ORDER BY id DESC LIMIT ?
+                    """,
+                    (int(limit),),
+                )
+            return cursor.fetchall()
+
+    def count_rows(self, table):
+        allowed = {"incidents", "iocs", "agents", "ingested_logs", "security_events", "scans", "users"}
+        if table not in allowed:
+            raise ValueError(f"count_rows not allowed for table {table}")
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            return cursor.fetchone()[0]

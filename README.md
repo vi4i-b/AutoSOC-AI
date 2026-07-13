@@ -18,6 +18,51 @@ Documentation in other languages: [Русский](docs/ru/README.md)
 - Runs Port Canary decoy listeners and logs threat events.
 - Sends scan results and alerts to Telegram.
 - Explains findings via an AI copilot (NVIDIA API, OpenAI, or local Ollama — with an offline fallback).
+- **Analyzes URLs for phishing** — URL structure, TLS certificate, page content,
+  spelling/homograph checks, and an AI verdict (see below).
+- **SOC Operations Console** — a dedicated window for analysts/sysadmins:
+  triage queue, incident cases, endpoint/agent fleet, threat-intel watchlist,
+  log search, and KPI metrics.
+
+## Anti-phishing engine
+
+Open the **Anti-Phishing Analysis** tab and enter a URL:
+
+- **Quick Check** — offline URL heuristics only (IP-literal hosts, punycode /
+  homograph domains, brand look-alikes, suspicious TLDs, shorteners, `@`
+  tricks, long/hyphen-heavy hosts).
+- **Full Analyze** — additionally fetches the page (SSRF-guarded, size- and
+  time-limited, JavaScript never executed), inspects the **TLS certificate**,
+  scans page **content** (off-site credential forms, urgency language, brand
+  impersonation, iframes/obfuscation), checks **spelling** (common
+  misspellings + Cyrillic/Greek homograph text), and — if a NVIDIA model key
+  is set — adds a language-model **verdict** that reviews the page text for
+  spelling/grammar and phishing intent.
+
+Each finding is shown as a weighted signal, combined into a 0–100 score and a
+verdict (Likely Safe → Questionable → Suspicious → Dangerous). Results can be
+promoted to a SOC incident with one click.
+
+Paste your NVIDIA API key in the left sidebar (**AI Engine (NVIDIA)** card) to
+enable AI verdicts and the security copilot; it is stored in the per-user,
+owner-only database.
+
+## SOC Operations Console
+
+Click **Open SOC Console** in the left sidebar. Tabs:
+
+- **Triage Queue** — all security events, severity-filtered; promote to incident.
+- **Incidents** — case management with status, severity, assignee, MITRE
+  ATT&CK technique, and investigation notes.
+- **Endpoints & Agents** — enrolled endpoints, health, and an enrollment-token
+  generator for onboarding new hosts.
+- **Threat Intel** — IOC watchlist with add/lookup/match.
+- **Log Search** — free-text search over centrally ingested logs.
+- **Metrics** — open/critical/resolved cases, event volume, fleet size.
+
+See [docs/AGENTS_AND_ROADMAP.md](docs/AGENTS_AND_ROADMAP.md) for the endpoint-agent
+architecture (enrollment, mTLS, log shipping, response actions) and the
+product/monetization roadmap.
 
 ## Project structure
 
@@ -27,7 +72,7 @@ autosoc/
 ├── analyzer.py          # risk catalog and scoring
 ├── auth.py              # login, registration, lockout, remember-me
 ├── canary.py            # decoy port listeners
-├── database.py          # SQLite storage (users, scans, events, settings)
+├── database.py          # SQLite storage (users, scans, events, incidents, agents, iocs, logs)
 ├── env.py               # .env loader
 ├── guard.py             # traffic-spike (DDoS) monitor
 ├── logging_setup.py     # console + rotating file logging
@@ -37,6 +82,13 @@ autosoc/
 ├── security_utils.py    # PBKDF2 password hashing
 ├── validators.py        # input validation
 ├── ai/                  # AI providers (nvidia.py, expert.py)
+├── phishing/            # anti-phishing engine
+│   ├── analyzer.py      #   orchestrator → PhishingReport
+│   ├── url_features.py  #   URL heuristics (offline)
+│   ├── fetcher.py       #   SSRF-safe page fetch + HTML parse
+│   ├── tls_check.py     #   TLS certificate inspection
+│   ├── content_features.py #  form/urgency/impersonation checks
+│   └── spelling.py      #   misspelling + homograph detection
 ├── system/              # OS integration
 │   ├── commands.py      #   safe subprocess execution (no shell)
 │   ├── firewall.py      #   netsh / iptables backends
@@ -46,7 +98,11 @@ autosoc/
 │   ├── os_auth.py       #   Windows account login (LogonUserW)
 │   └── privileges.py    #   admin/root checks
 ├── telegram/            # bot client + long-polling listener
-└── ui/                  # CustomTkinter windows (login, dashboard, chat)
+└── ui/                  # CustomTkinter windows
+    ├── login.py         #   login / registration
+    ├── dashboard.py     #   main dashboard (logic)
+    ├── dashboard_layout.py  # dashboard widgets
+    └── soc_console.py   #   SOC Operations Console
 tests/                   # unit tests
 ```
 
