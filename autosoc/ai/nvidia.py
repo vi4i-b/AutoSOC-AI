@@ -5,6 +5,7 @@ import re
 import requests
 
 from autosoc.env import load_env_file
+from autosoc.net import retry_request
 
 
 class NvidiaSecurityAI:
@@ -120,6 +121,12 @@ class NvidiaSecurityAI:
             return None
         return self._parse_json_verdict(raw)
 
+    def _redact(self, text: str) -> str:
+        """Keep the API key out of error messages shown in the UI/logs."""
+        if self.api_key:
+            text = text.replace(self.api_key, "***KEY***")
+        return text
+
     @staticmethod
     def _parse_json_verdict(raw):
         match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -150,8 +157,8 @@ class NvidiaSecurityAI:
                 "stream": False,
             }
 
-            try:
-                response = requests.post(
+            def attempt() -> requests.Response:
+                return requests.post(
                     self.base_url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
@@ -160,6 +167,11 @@ class NvidiaSecurityAI:
                     json=payload,
                     timeout=(8, self.timeout),
                 )
+
+            try:
+                # Transient failures (timeouts, 5xx, rate limits) are retried
+                # with exponential backoff before falling back to the next model.
+                response = retry_request(attempt, attempts=3)
                 response.raise_for_status()
                 data = response.json()
                 choices = data.get("choices") or []
@@ -170,7 +182,9 @@ class NvidiaSecurityAI:
                     return content
                 self.last_error = f"NVIDIA returned an empty response for model {model_name}."
             except Exception as exc:
-                self.last_error = f"NVIDIA request failed for model {model_name}: {exc}"
+                # Broad by design: the API key rides in the Authorization header,
+                # so any error must be redacted before surfacing to the UI.
+                self.last_error = f"NVIDIA request failed for model {model_name}: {self._redact(str(exc))}"
 
         return None
 

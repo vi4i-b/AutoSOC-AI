@@ -159,7 +159,7 @@ autosoc/
 │   ├── hardening.py     #   service-level hardening per OS
 │   ├── log_monitor.py   #   failed-login monitoring per OS
 │   ├── netinfo.py       #   local IPs, remote-target detection
-│   ├── os_auth.py       #   Windows account login (LogonUserW)
+│   ├── os_auth.py       #   OS-account login (Windows LogonUserW / Linux PAM)
 │   └── privileges.py    #   admin/root checks
 ├── telegram/            # bot client + long-polling listener
 └── ui/                  # CustomTkinter windows
@@ -200,8 +200,11 @@ sudo -E .venv/bin/python main.py
 Notes for Linux:
 - Firewall control uses **iptables**; rules are tagged `AutoSOC_*`.
 - Brute-force detection reads `/var/log/auth.log` (root or `adm` group).
-- OS-account login is Windows-only; on Linux use a local AutoSOC account
-  (register in the login window).
+- Sign in with your **OS account** (same login/password as the machine):
+  Windows via `LogonUserW`, Linux via **PAM** (`libpam`; the current user's own
+  password works without root on a typical system). If OS auth is unavailable
+  it falls back to a local AutoSOC account (register in the login window).
+  Override the PAM service with `AUTOSOC_PAM_SERVICE` (default `login`).
 
 ### Windows
 

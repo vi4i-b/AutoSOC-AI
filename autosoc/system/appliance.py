@@ -25,17 +25,19 @@ Connectors never raise on network/API failure — they return
 """
 
 import ipaddress
+from typing import Optional
 
 import requests
 
 from autosoc.logging_setup import get_logger
+from autosoc.net import RetryError, retry_request
 
 log = get_logger("system.appliance")
 
 REQUEST_TIMEOUT = (6, 12)
 
 
-def _valid_ip(ip):
+def _valid_ip(ip) -> Optional[str]:
     try:
         return str(ipaddress.ip_address(str(ip).strip()))
     except ValueError:
@@ -107,12 +109,15 @@ class FortiGateConnector(ApplianceConnector):
         if not self.host or not self.api_token:
             return False, "FortiGate host and API token are required."
         try:
-            resp = requests.get(
-                self._url(f"firewall/addrgrp/{self.address_group}"),
-                params=self._params(), headers=self._headers(),
-                timeout=REQUEST_TIMEOUT, verify=self.verify_tls,
+            resp = retry_request(
+                lambda: requests.get(
+                    self._url(f"firewall/addrgrp/{self.address_group}"),
+                    params=self._params(), headers=self._headers(),
+                    timeout=REQUEST_TIMEOUT, verify=self.verify_tls,
+                ),
+                attempts=2,
             )
-        except requests.RequestException as exc:
+        except (requests.RequestException, RetryError) as exc:
             return False, self._redact(f"Connection failed: {exc}")
         if resp.status_code == 200:
             return True, f"Connected. Address group '{self.address_group}' is reachable."

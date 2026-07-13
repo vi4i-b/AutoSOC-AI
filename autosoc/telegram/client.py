@@ -11,6 +11,7 @@ Security notes:
 import requests
 
 from autosoc.logging_setup import get_logger
+from autosoc.net import retry_request
 
 log = get_logger("telegram.client")
 
@@ -53,23 +54,24 @@ class TelegramBotClient:
         return self._request("sendMessage", method="post", payload=payload, timeout=30)
 
     def _request(self, method_name, method="get", payload=None, timeout=30):
-        try:
+        url = f"{self.base_url}/{method_name}"
+
+        def attempt() -> requests.Response:
             if method == "post":
-                response = requests.post(
-                    f"{self.base_url}/{method_name}",
-                    json=payload or {},
-                    timeout=timeout,
-                )
-            else:
-                response = requests.get(
-                    f"{self.base_url}/{method_name}",
-                    params=payload or {},
-                    timeout=timeout,
-                )
+                return requests.post(url, json=payload or {}, timeout=timeout)
+            return requests.get(url, params=payload or {}, timeout=timeout)
+
+        try:
+            # Retry transient failures (timeouts, 5xx, 429) with backoff; 4xx
+            # and success are returned on the first response.
+            response = retry_request(attempt, attempts=3)
             response.raise_for_status()
             data = response.json()
             return bool(data.get("ok")), data
         except Exception as exc:
+            # Broad by design: this is a secret-handling boundary — the token is
+            # in the request URL, so *any* error message must be redacted before
+            # it can reach the UI or logs.
             description = self._redact(str(exc))
             log.debug("Telegram %s failed: %s", method_name, description)
             return False, {"description": description}
