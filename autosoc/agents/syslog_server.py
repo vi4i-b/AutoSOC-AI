@@ -88,9 +88,10 @@ def parse_syslog(raw, sender_ip):
 
 class SyslogService:
     def __init__(self, db, on_detection=None, host="0.0.0.0", port=None,
-                 threshold=5, window_seconds=60):
+                 threshold=5, window_seconds=60, engine=None):
         self.db = db
         self.on_detection = on_detection
+        self.engine = engine
         self.host = host
         self.port = int(port) if port is not None else int(os.getenv("AUTOSOC_SYSLOG_PORT") or DEFAULT_SYSLOG_PORT)
         self.tracker = BruteForceTracker(threshold=threshold, window_seconds=window_seconds)
@@ -147,6 +148,11 @@ class SyslogService:
             if not message:
                 return
             self.db.add_ingested_log(message[:2000], agent_id=host, source="syslog", severity=severity)
+            if self.engine is not None:
+                try:
+                    self.engine.evaluate_log(host, "syslog", message)
+                except Exception:
+                    log.exception("Rule engine evaluation failed for syslog")
             self._detect(host, sender_ip, message)
         except Exception as exc:
             log.debug("Syslog processing error: %s", exc)

@@ -22,6 +22,7 @@ from autosoc.analyzer import RiskAnalyzer
 from autosoc.auth import get_user_telegram, update_user_telegram
 from autosoc.canary import PortCanary
 from autosoc.database import SOCDatabase
+from autosoc.detection import RuleEngine
 from autosoc.env import load_env_file
 from autosoc.guard import NetworkGuard
 from autosoc.logging_setup import get_logger
@@ -81,6 +82,11 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         self.guard = NetworkGuard(self.on_threat_detected)
         self.port_canary = PortCanary(self.on_canary_trip)
         self.response = ResponseController(self.db, local_firewall=self.firewall)
+        self.rule_engine = RuleEngine(
+            self.db,
+            on_alert=self.on_rule_alert,
+            responder=lambda ip, reason: self.response.block_ip(ip, reason=reason, actor="detection-engine"),
+        )
         self.soc_console = None
         self.collector = None
         self.syslog = None
@@ -1461,7 +1467,7 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         from autosoc.agents.server import CollectorService
 
         if self.collector is None:
-            self.collector = CollectorService(self.db)
+            self.collector = CollectorService(self.db, engine=self.rule_engine)
         ok, message = self.collector.start()
         self.db.add_audit_event(
             "collector_started" if ok else "collector_start_failed",
@@ -1523,7 +1529,8 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         from autosoc.agents.syslog_server import SyslogService
 
         if self.syslog is None:
-            self.syslog = SyslogService(self.db, on_detection=self.on_bruteforce_detected)
+            self.syslog = SyslogService(self.db, on_detection=self.on_bruteforce_detected,
+                                        engine=self.rule_engine)
         ok, message = self.syslog.start()
         self.db.add_audit_event(
             "syslog_started" if ok else "syslog_start_failed",
@@ -1591,3 +1598,29 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
 
     def unblock_ip_everywhere(self, ip):
         return self.response.unblock_ip(ip, actor=self.current_user.get("username", "autosoc"))
+
+    # ── detection rule alerts ────────────────────────────────────────
+
+    def on_rule_alert(self, alert):
+        """Called by the rule engine (from collector/syslog threads) when a rule fires."""
+        severity = alert.get("severity", "Medium")
+        line = (f"\n[RULE] {alert.get('name')} [{severity}] "
+                f"{'· '+alert['mitre'] if alert.get('mitre') else ''}\n"
+                f"       {alert.get('detail', '')}\n")
+        tag = "danger" if severity in ("High", "Critical") else "info"
+        self._append_result(line, tag, index="0.0")
+        self._set_status(f"RULE: {alert.get('name')}", theme.STATUS_ERROR if tag == "danger" else theme.STATUS_WARN)
+        self._ui(self._refresh_dashboard_metrics)
+
+        if self.chat_id and severity in ("High", "Critical"):
+            message = (
+                f"🚨 *AutoSOC Detection*\n\n"
+                f"Rule: *{escape_markdown(alert.get('name', ''))}*\n"
+                f"Severity: *{severity}*\n"
+                f"MITRE: `{escape_markdown(alert.get('mitre') or 'n/a')}`\n"
+                f"{escape_markdown(alert.get('detail', ''))}"
+            )
+            threading.Thread(target=self.send_telegram_alert, args=(message,), daemon=True).start()
+
+    def reload_rules(self):
+        self.rule_engine.reload()

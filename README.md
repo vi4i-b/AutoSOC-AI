@@ -55,9 +55,27 @@ Click **Open SOC Console** in the left sidebar. Tabs:
 - **Incidents** — case management with status, severity, assignee, MITRE
   ATT&CK technique, and investigation notes.
 - **Endpoints & Agents** — start the built-in collector and onboard servers.
+- **Detection Rules** — a SIEM-style rule engine (see below).
 - **Threat Intel** — IOC watchlist with add/lookup/match.
 - **Log Search** — free-text search over centrally ingested logs.
 - **Metrics** — open/critical/resolved cases, event volume, fleet size.
+
+### Detection rules (SIEM-style)
+
+The **Detection Rules** tab ships a default baseline of ~21 rules — the kind
+of content most SIEMs enable out of the box — mapped to MITRE ATT&CK:
+SSH/FortiGate brute-force, root login, new user / added-to-sudo, sudo failures,
+reverse shell & `curl|sh`, web-shell indicators, security-service-stopped and
+log-cleared (defense evasion), plus telemetry rules — **connection to a
+block-listed / IOC IP** (auto-block), **listener on a backdoor port**,
+**connection to a C2-style port**, and **offensive/miner process running**.
+
+Rules run automatically on every ingested log line (agent + syslog) and every
+endpoint telemetry snapshot. A match raises a security event and, per the
+rule, opens an incident and/or blocks the source IP. Each rule can be
+enabled/disabled with a switch; built-ins can be disabled and **custom
+log-pattern rules added/removed** (regex, severity, MITRE, threshold/window,
+auto-incident, auto-block).
 
 ### Endpoint agents (collect logs/processes/IP from any server)
 
@@ -119,6 +137,9 @@ autosoc/
 ├── agents/              # log/telemetry ingestion
 │   ├── server.py        #   HTTP collector (enroll/report, agent + blocklist feed)
 │   └── syslog_server.py #   agentless syslog receiver (FortiGate/devices)
+├── detection/           # SIEM-style rule engine
+│   ├── engine.py        #   evaluate logs + telemetry, fire alerts
+│   └── default_rules.py #   default baseline (MITRE-mapped)
 ├── phishing/            # anti-phishing engine
 │   ├── analyzer.py      #   orchestrator → PhishingReport
 │   ├── url_features.py  #   URL heuristics (offline)

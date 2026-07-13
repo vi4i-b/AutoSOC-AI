@@ -68,6 +68,7 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self.tab_triage = self.tabview.add("Triage Queue")
         self.tab_incidents = self.tabview.add("Incidents")
         self.tab_agents = self.tabview.add("Endpoints & Agents")
+        self.tab_rules = self.tabview.add("Detection Rules")
         self.tab_intel = self.tabview.add("Threat Intel")
         self.tab_logs = self.tabview.add("Log Search")
         self.tab_metrics = self.tabview.add("Metrics")
@@ -75,6 +76,7 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._build_triage_tab()
         self._build_incidents_tab()
         self._build_agents_tab()
+        self._build_rules_tab()
         self._build_intel_tab()
         self._build_logs_tab()
         self._build_metrics_tab()
@@ -152,6 +154,7 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._refresh_triage()
         self._refresh_incidents()
         self._refresh_agents()
+        self._refresh_rules()
         self._refresh_intel()
         self._refresh_logs()
         self._refresh_metrics()
@@ -764,6 +767,98 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._refresh_agents()
         self._refresh_metrics()
 
+    # ── Detection Rules ──────────────────────────────────────────────
+
+    def _build_rules_tab(self):
+        tab = self.tab_rules
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        ctk.CTkLabel(bar, text="Detection rules run on ingested logs and endpoint telemetry. "
+                              "Toggle to enable/disable; built-ins can be disabled, custom rules removed.",
+                     text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=12), wraplength=760,
+                     justify="left").pack(side="left", padx=2)
+        self.rules_count = ctk.CTkLabel(bar, text="", text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=12))
+        self.rules_count.pack(side="right", padx=(6, 8))
+        ctk.CTkButton(bar, text="+ Add Rule", width=120, height=30, corner_radius=10,
+                      fg_color=theme.ACCENT_BLUE, hover_color=theme.ACCENT_BLUE_HOVER,
+                      command=self._add_rule_dialog).pack(side="right", padx=6)
+
+        self.rules_list = self._scroll_frame(tab)
+        self.rules_list.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+    def _refresh_rules(self):
+        if not hasattr(self, "rules_list"):
+            return
+        self._clear(self.rules_list)
+        rules = self.db.list_rules()
+        enabled = sum(1 for r in rules if r["enabled"])
+        self.rules_count.configure(text=f"{enabled}/{len(rules)} enabled")
+        for index, rule in enumerate(rules):
+            self._rule_row(index, rule)
+
+    def _rule_row(self, index, rule):
+        card = ctk.CTkFrame(self.rules_list, fg_color=theme.BG_PANEL, corner_radius=12)
+        card.grid(row=index, column=0, sticky="ew", padx=8, pady=4)
+        card.grid_columnconfigure(1, weight=1)
+
+        color = SEVERITY_COLORS.get(rule["severity"], theme.TEXT_MUTED)
+        ctk.CTkLabel(card, text="●", text_color=color, font=ctk.CTkFont(size=15)).grid(
+            row=0, column=0, rowspan=2, sticky="n", padx=(12, 8), pady=10)
+
+        tag = "built-in" if rule["builtin"] else "custom"
+        ctk.CTkLabel(card, text=f"{rule['name']}   [{rule['severity']}]  ·  {tag}",
+                     text_color=theme.TEXT_SOFT, font=ctk.CTkFont(size=13, weight="bold"),
+                     anchor="w").grid(row=0, column=1, sticky="ew", padx=4, pady=(10, 0))
+        meta = f"{rule['category']} · {rule['rule_type']}"
+        if rule["mitre"]:
+            meta += f" · MITRE {rule['mitre']}"
+        if rule["auto_incident"]:
+            meta += " · auto-incident"
+        if rule["auto_block"]:
+            meta += " · auto-block"
+        ctk.CTkLabel(card, text=f"{rule['description']}\n{meta}", text_color="#85a3bd",
+                     font=ctk.CTkFont(size=11), anchor="w", justify="left",
+                     wraplength=640).grid(row=1, column=1, sticky="ew", padx=4, pady=(0, 10))
+
+        controls = ctk.CTkFrame(card, fg_color="transparent")
+        controls.grid(row=0, column=2, rowspan=2, padx=10, pady=8)
+        switch = ctk.CTkSwitch(controls, text="", width=44,
+                               progress_color=theme.ACCENT_GREEN_DARK,
+                               command=lambda: self._toggle_rule(rule["rule_key"], switch))
+        if rule["enabled"]:
+            switch.select()
+        else:
+            switch.deselect()
+        switch.pack(pady=(0, 6))
+        if not rule["builtin"]:
+            ctk.CTkButton(controls, text="Delete", width=80, height=26, corner_radius=10,
+                          fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
+                          border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
+                          command=lambda: self._delete_rule(rule["rule_key"])).pack()
+
+    def _toggle_rule(self, rule_key, switch):
+        self.db.set_rule_enabled(rule_key, bool(switch.get()))
+        self.db.add_audit_event("rule_toggled", self.actor,
+                                f"Rule {rule_key} {'enabled' if switch.get() else 'disabled'}.")
+        self.app.reload_rules()
+        self._refresh_rules()
+
+    def _delete_rule(self, rule_key):
+        self.db.delete_rule(rule_key)
+        self.db.add_audit_event("rule_deleted", self.actor, f"Custom rule {rule_key} deleted.")
+        self.app.reload_rules()
+        self._refresh_rules()
+
+    def _add_rule_dialog(self):
+        _AddRuleDialog(self, self.app, self.db, on_saved=self._on_rule_saved)
+
+    def _on_rule_saved(self):
+        self.app.reload_rules()
+        self._refresh_rules()
+
     # ── Threat Intel (IOCs) ──────────────────────────────────────────
 
     def _build_intel_tab(self):
@@ -1324,3 +1419,112 @@ class _EndpointDetailsWindow(ctk.CTkToplevel):
         lines.append("Full log lines from this endpoint are searchable in the Log Search tab.")
         lines.append("Tip: run the agent with sudo so it can read /var/log/auth.log and all sockets.")
         return "\n".join(lines)
+
+
+class _AddRuleDialog(ctk.CTkToplevel):
+    """Create a custom log-pattern detection rule."""
+
+    def __init__(self, master, app, db, on_saved=None):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.on_saved = on_saved
+        self.title("Add Detection Rule")
+        self.geometry("580x620")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        ctk.CTkLabel(self, text="New Detection Rule", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        ctk.CTkLabel(self, text="Matches a regular expression against ingested log lines "
+                              "(agent + syslog). Fires when the pattern is seen "
+                              "(or after 'threshold' matches within the window).",
+                     text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11),
+                     wraplength=520, justify="left").pack(anchor="w", padx=20, pady=(0, 10))
+
+        form = ctk.CTkFrame(self, fg_color="transparent")
+        form.pack(fill="both", expand=True, padx=20)
+        form.grid_columnconfigure(1, weight=1)
+
+        self.name_entry = self._row(form, 0, "Name", placeholder="e.g. Suspicious wget to /tmp")
+        self.pattern_entry = self._row(form, 1, "Regex pattern", placeholder=r"wget .*-O /tmp/")
+
+        ctk.CTkLabel(form, text="Severity", text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w", pady=6, padx=(0, 8))
+        self.sev_menu = ctk.CTkOptionMenu(form, values=SEVERITIES, width=160, fg_color=theme.BG_CARD,
+                                          button_color=theme.BTN_NEUTRAL, button_hover_color=theme.BTN_NEUTRAL_HOVER)
+        self.sev_menu.set("Medium")
+        self.sev_menu.grid(row=2, column=1, sticky="w", pady=6)
+
+        self.category_entry = self._row(form, 3, "Category", value="Custom")
+        self.mitre_entry = self._row(form, 4, "MITRE ATT&CK", placeholder="e.g. T1059")
+        self.threshold_entry = self._row(form, 5, "Threshold", value="1")
+        self.window_entry = self._row(form, 6, "Window (sec)", value="60")
+
+        self.auto_incident = ctk.CTkCheckBox(form, text="Open an incident when it fires",
+                                             fg_color=theme.ACCENT_BLUE)
+        self.auto_incident.grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 2))
+        self.auto_block = ctk.CTkCheckBox(form, text="Block the source IP (if present in the log line)",
+                                          fg_color=theme.ACCENT_RED_DARK)
+        self.auto_block.grid(row=8, column=0, columnspan=2, sticky="w", pady=2)
+
+        self.result = ctk.CTkLabel(self, text="", text_color=theme.TEXT_MUTED,
+                                   font=ctk.CTkFont(size=11), wraplength=520, justify="left")
+        self.result.pack(anchor="w", padx=20, pady=(6, 0))
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=16)
+        ctk.CTkButton(row, text="Cancel", width=90, height=34, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self.destroy).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(row, text="Create", width=90, height=34, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self._create).pack(side="right")
+
+    def _row(self, form, row, label, placeholder="", value=""):
+        ctk.CTkLabel(form, text=label, text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12)).grid(row=row, column=0, sticky="w", pady=6, padx=(0, 8))
+        entry = ctk.CTkEntry(form, height=34, fg_color=theme.BG_FIELD, border_color=theme.FIELD_BORDER,
+                             placeholder_text=placeholder)
+        if value:
+            entry.insert(0, value)
+        entry.grid(row=row, column=1, sticky="ew", pady=6)
+        return entry
+
+    def _create(self):
+        import re as _re
+
+        name = self.name_entry.get().strip()
+        pattern = self.pattern_entry.get().strip()
+        if not name or not pattern:
+            self.result.configure(text="Name and pattern are required.", text_color=theme.STATUS_ERROR)
+            return
+        try:
+            _re.compile(pattern)
+        except _re.error as exc:
+            self.result.configure(text=f"Invalid regex: {exc}", text_color=theme.STATUS_ERROR)
+            return
+        try:
+            threshold = max(int(self.threshold_entry.get() or "1"), 1)
+            window = max(int(self.window_entry.get() or "60"), 5)
+        except ValueError:
+            self.result.configure(text="Threshold and window must be numbers.", text_color=theme.STATUS_ERROR)
+            return
+
+        rule_key = "custom_" + _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:40]
+        rule_id = self.db.add_rule(
+            rule_key=rule_key, name=name, pattern=pattern, severity=self.sev_menu.get(),
+            category=self.category_entry.get().strip() or "Custom", mitre=self.mitre_entry.get().strip(),
+            rule_type="log_match", threshold=threshold, window_seconds=window,
+            auto_incident=1 if self.auto_incident.get() else 0,
+            auto_block=1 if self.auto_block.get() else 0,
+            description="Custom rule.", created_by=self.app.current_user.get("username", "analyst"),
+        )
+        if rule_id is None:
+            self.result.configure(text=f"A rule named like this already exists ({rule_key}).",
+                                  text_color=theme.STATUS_ERROR)
+            return
+        self.db.add_audit_event("rule_created", self.app.current_user.get("username", "analyst"),
+                                f"Custom rule {rule_key} created.")
+        if self.on_saved:
+            self.on_saved()
+        self.destroy()

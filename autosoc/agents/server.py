@@ -46,6 +46,10 @@ class _CollectorHandler(BaseHTTPRequestHandler):
     def db(self):
         return self.server.autosoc_db
 
+    @property
+    def engine(self):
+        return getattr(self.server, "autosoc_engine", None)
+
     def _send_json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -204,6 +208,13 @@ class _CollectorHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             pass
 
+        engine = self.engine
+        if engine is not None:
+            try:
+                engine.evaluate_telemetry(agent_id, telemetry)
+            except Exception:
+                log.exception("Rule engine telemetry evaluation failed")
+
         stored = 0
         for entry in (data.get("logs") or [])[:MAX_LOG_LINES_PER_REPORT]:
             if isinstance(entry, dict):
@@ -217,6 +228,11 @@ class _CollectorHandler(BaseHTTPRequestHandler):
             if message.strip():
                 self.db.add_ingested_log(message, agent_id=agent_id, source=source, severity=severity)
                 stored += 1
+                if engine is not None:
+                    try:
+                        engine.evaluate_log(agent_id, source, message)
+                    except Exception:
+                        log.exception("Rule engine log evaluation failed")
 
         self._send_json(200, {"ok": True, "stored_logs": stored})
 
@@ -224,8 +240,9 @@ class _CollectorHandler(BaseHTTPRequestHandler):
 class CollectorService:
     """Starts/stops the collector HTTP server in a background thread."""
 
-    def __init__(self, db, host=None, port=None):
+    def __init__(self, db, host=None, port=None, engine=None):
         self.db = db
+        self.engine = engine
         self.host = host or (os.getenv("AUTOSOC_COLLECTOR_HOST") or "0.0.0.0").strip()
         # port=0 is a valid request ("let the OS pick a free port"), so only
         # fall back to the env/default when port is None.
@@ -248,6 +265,7 @@ class CollectorService:
             return False, f"Could not bind {self.host}:{self.port}: {exc}"
 
         httpd.autosoc_db = self.db
+        httpd.autosoc_engine = self.engine
         httpd.daemon_threads = True
         self._httpd = httpd
         self._thread = threading.Thread(target=httpd.serve_forever, name="AutoSOCCollector", daemon=True)

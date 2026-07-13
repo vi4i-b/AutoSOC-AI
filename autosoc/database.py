@@ -39,6 +39,7 @@ class SOCDatabase:
         self.conn.row_factory = sqlite3.Row
         self._configure_connection()
         self.create_tables()
+        self.seed_default_rules()
         restrict_file_permissions(self.db_path)
 
     def _configure_connection(self):
@@ -276,6 +277,31 @@ class SOCDatabase:
                     active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT,
                     updated_at TEXT
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS detection_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_key TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    category TEXT DEFAULT '',
+                    severity TEXT DEFAULT 'Medium',
+                    mitre TEXT DEFAULT '',
+                    rule_type TEXT DEFAULT 'log_match',
+                    pattern TEXT DEFAULT '',
+                    threshold INTEGER DEFAULT 1,
+                    window_seconds INTEGER DEFAULT 60,
+                    ports TEXT DEFAULT '',
+                    auto_incident INTEGER DEFAULT 0,
+                    auto_block INTEGER DEFAULT 0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    builtin INTEGER NOT NULL DEFAULT 0,
+                    created_by TEXT DEFAULT '',
+                    created_at TEXT
                 )
                 """
             )
@@ -1075,3 +1101,96 @@ class SOCDatabase:
             cursor = self.conn.cursor()
             cursor.execute("SELECT ip FROM blocklist WHERE active = 1 ORDER BY ip")
             return [row["ip"] for row in cursor.fetchall()]
+
+    # ── detection rules ──────────────────────────────────────────────
+
+    def seed_default_rules(self):
+        """Insert the built-in baseline rules that are missing (by rule_key)."""
+        from autosoc.detection.default_rules import DEFAULT_RULES
+
+        with self._lock:
+            now = self._now()
+            cursor = self.conn.cursor()
+            for rule in DEFAULT_RULES:
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO detection_rules (
+                        rule_key, name, description, category, severity, mitre, rule_type,
+                        pattern, threshold, window_seconds, ports, auto_incident, auto_block,
+                        enabled, builtin, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 'system', ?)
+                    """,
+                    (
+                        rule["rule_key"], rule["name"], rule.get("description", ""),
+                        rule.get("category", ""), rule.get("severity", "Medium"),
+                        rule.get("mitre", ""), rule.get("rule_type", "log_match"),
+                        rule.get("pattern", ""), int(rule.get("threshold", 1)),
+                        int(rule.get("window_seconds", 60)), rule.get("ports", ""),
+                        int(rule.get("auto_incident", 0)), int(rule.get("auto_block", 0)), now,
+                    ),
+                )
+            self.conn.commit()
+
+    def list_rules(self, enabled_only=False):
+        with self._lock:
+            cursor = self.conn.cursor()
+            query = (
+                "SELECT id, rule_key, name, description, category, severity, mitre, rule_type, "
+                "pattern, threshold, window_seconds, ports, auto_incident, auto_block, enabled, "
+                "builtin, created_by, created_at FROM detection_rules"
+            )
+            if enabled_only:
+                query += " WHERE enabled = 1"
+            query += " ORDER BY builtin DESC, category, name"
+            cursor.execute(query)
+            return cursor.fetchall()
+
+    def get_rule(self, rule_key):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM detection_rules WHERE rule_key = ?", (rule_key,))
+            return cursor.fetchone()
+
+    def add_rule(self, rule_key, name, pattern, severity="Medium", category="Custom", mitre="",
+                 rule_type="log_match", threshold=1, window_seconds=60, ports="",
+                 auto_incident=0, auto_block=0, description="", created_by=""):
+        rule_key = (rule_key or "").strip()
+        name = (name or "").strip()
+        if not rule_key or not name:
+            return None
+        try:
+            with self._lock:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO detection_rules (
+                        rule_key, name, description, category, severity, mitre, rule_type,
+                        pattern, threshold, window_seconds, ports, auto_incident, auto_block,
+                        enabled, builtin, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+                    """,
+                    (rule_key, name, description, category, severity, mitre, rule_type,
+                     pattern, int(threshold), int(window_seconds), ports,
+                     int(auto_incident), int(auto_block), created_by, self._now()),
+                )
+                self.conn.commit()
+                return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+    def set_rule_enabled(self, rule_key, enabled):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE detection_rules SET enabled = ? WHERE rule_key = ?",
+                (1 if enabled else 0, rule_key),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_rule(self, rule_key):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM detection_rules WHERE rule_key = ?", (rule_key,))
+            self.conn.commit()
+            return cursor.rowcount > 0

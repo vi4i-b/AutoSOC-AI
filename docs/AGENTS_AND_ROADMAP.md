@@ -23,6 +23,7 @@ Console is built around exactly this loop:
 | **Threat intel** | Compare artifacts against known-bad indicators | Threat Intel (IOC watchlist) |
 | **Containment/response** | Block IPs/ports, isolate hosts | Dashboard firewall + agent actions |
 | **Reporting/metrics** | MTTD, MTTR, alert volume, shift handover | Metrics tab |
+| **Detection** | Turn raw telemetry into alerts with rules | Detection Rules engine |
 | **Threat hunting** | Proactively search telemetry for badness | Log Search + IOC matching |
 
 Tiers, for context:
