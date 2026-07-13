@@ -1643,6 +1643,12 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         return command_id
 
     def scan_endpoint_ports(self, ip_address):
-        """Run the nmap scanner against an endpoint's IP (external port view)."""
+        """Run the nmap scanner against an endpoint's IP (external port view).
+
+        The IP is agent-reported, so validate it as a safe scan target before
+        handing it to the scanner (defence in depth against a malicious agent).
+        """
+        if not is_safe_scan_target(ip_address):
+            raise ValueError(f"Unsafe scan target reported by agent: {ip_address!r}")
         scanner = NetworkScanner()
         return scanner.scan_network(ip_address, ports=list(self.port_definitions.keys()))

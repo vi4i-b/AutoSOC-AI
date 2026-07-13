@@ -69,6 +69,39 @@ and data — and what operators must know before deploying it.
 - The Port Canary intentionally binds decoy listeners on `0.0.0.0` so it can
   detect LAN scanners. Restrict it with `AUTOSOC_CANARY_HOST` if needed.
 
+## Endpoint agents & collector
+
+- The collector authenticates agents with a bearer **ingestion token**
+  (constant-time compared, revocable via *Regenerate Token*). Every POST
+  endpoint and the command-poll require it; request bodies are size-capped and
+  never executed.
+- The agent **command channel is a fixed whitelist** (`isolate` / `unisolate`)
+  — it does **not** run arbitrary shell commands from the server. Unknown
+  commands are rejected by the agent.
+- **Network isolation** (containment) drops all endpoint traffic *except* to
+  the AutoSOC server, loopback, established connections, and DNS — so an
+  isolated host can still be released remotely. It requires the agent to run
+  as root/Administrator.
+- The **/blocklist.txt** feed and the agent transport are plain HTTP, intended
+  for a trusted LAN or behind a TLS reverse proxy (see AGENTS_AND_ROADMAP.md).
+- An endpoint's agent-reported IP is re-validated with `is_safe_scan_target`
+  before it is used as a scan target (defence in depth against a rogue agent).
+
+## OS-account login & sessions
+
+- Operators can sign in with their **OS credentials**: Windows via
+  `LogonUserW`, Linux via **PAM** (`libpam`). The password is held only for the
+  duration of the check, under a lock, and cleared afterwards; it is never
+  logged. All auth failures degrade to `None` and fall back to local accounts.
+- Local accounts use PBKDF2 hashing and the account-lockout policy above.
+
+## Network reliability
+
+- Outbound HTTP (Telegram, NVIDIA, FortiGate) uses explicit connect/read
+  timeouts and bounded **exponential-backoff retries** for transient failures
+  only (timeouts, connection errors, 429/5xx). Secrets (bot token, API key) are
+  redacted from every error message at the client boundary.
+
 ## Telegram
 
 - Alerts are sent only to the chat id linked to the current account; a chat
