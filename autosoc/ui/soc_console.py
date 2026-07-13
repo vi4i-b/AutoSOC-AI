@@ -720,7 +720,8 @@ class SOCConsoleWindow(ctk.CTkToplevel):
             self._agent_row(index, row)
 
     def _agent_row(self, index, row):
-        agent_pk, agent_id, hostname, platform, ip_address, status, labels, last_seen, created_at = row
+        (agent_pk, agent_id, hostname, platform, ip_address, status,
+         labels, last_seen, created_at, isolated) = row
         card = ctk.CTkFrame(self.agent_list, fg_color=theme.BG_PANEL, corner_radius=12)
         card.grid(row=index, column=0, sticky="ew", padx=8, pady=5)
         card.grid_columnconfigure(1, weight=1)
@@ -730,8 +731,12 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         ctk.CTkLabel(card, text="●", text_color=color, font=ctk.CTkFont(size=15)).grid(
             row=0, column=0, rowspan=2, sticky="n", padx=(12, 8), pady=10)
 
-        ctk.CTkLabel(card, text=f"{hostname or agent_id}  ·  {platform or 'unknown'}",
-                     text_color=theme.TEXT_SOFT, font=ctk.CTkFont(size=13, weight="bold"),
+        title = f"{hostname or agent_id}  ·  {platform or 'unknown'}"
+        if isolated:
+            title += "   🔒 ISOLATED"
+        ctk.CTkLabel(card, text=title,
+                     text_color=theme.STATUS_DANGER if isolated else theme.TEXT_SOFT,
+                     font=ctk.CTkFont(size=13, weight="bold"),
                      anchor="w").grid(row=0, column=1, sticky="ew", padx=4, pady=(10, 0))
         detail = f"id: {agent_id}  ·  ip: {ip_address or '—'}  ·  status: {status}"
         detail += f"\nlast seen: {last_seen or 'never'}  ·  enrolled: {created_at}"
@@ -740,13 +745,57 @@ class SOCConsoleWindow(ctk.CTkToplevel):
 
         buttons = ctk.CTkFrame(card, fg_color="transparent")
         buttons.grid(row=0, column=2, rowspan=2, padx=10, pady=8)
-        ctk.CTkButton(buttons, text="Details", width=80, height=28, corner_radius=10,
+        top = ctk.CTkFrame(buttons, fg_color="transparent")
+        top.pack()
+        ctk.CTkButton(top, text="Details", width=80, height=28, corner_radius=10,
                       fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
-                      command=lambda: self._agent_details(agent_id, hostname)).pack(pady=(0, 4))
-        ctk.CTkButton(buttons, text="Remove", width=80, height=28, corner_radius=10,
+                      command=lambda: self._agent_details(agent_id, hostname)).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(top, text="Scan Ports", width=90, height=28, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=lambda: self._scan_endpoint(agent_id, hostname, ip_address)).pack(side="left")
+        bottom = ctk.CTkFrame(buttons, fg_color="transparent")
+        bottom.pack(pady=(4, 0))
+        if isolated:
+            ctk.CTkButton(bottom, text="Release", width=90, height=28, corner_radius=10,
+                          fg_color=theme.ACCENT_GREEN_DARK, hover_color=theme.ACCENT_GREEN_DARK_HOVER,
+                          command=lambda: self._release_endpoint(agent_id, hostname)).pack(side="left", padx=(0, 4))
+        else:
+            ctk.CTkButton(bottom, text="Isolate", width=90, height=28, corner_radius=10,
+                          fg_color=theme.ACCENT_RED_DARK, hover_color=theme.ACCENT_RED_DARK_HOVER,
+                          command=lambda: self._isolate_endpoint(agent_id, hostname)).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(bottom, text="Remove", width=80, height=28, corner_radius=10,
                       fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
                       border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
-                      command=lambda: self._remove_agent(agent_id)).pack()
+                      command=lambda: self._remove_agent(agent_id)).pack(side="left")
+
+    def _isolate_endpoint(self, agent_id, hostname):
+        dialog = _ConfirmDialog(
+            self, "Isolate Endpoint",
+            f"Cut {hostname or agent_id} off the network?\n\n"
+            "The agent will drop all traffic except to this AutoSOC server (so you can release it "
+            "later). Applied on the endpoint's next check-in.\n\n"
+            "The endpoint needs the agent running as root/Administrator for this to take effect.")
+        self.wait_window(dialog)
+        if not dialog.confirmed:
+            return
+        command_id = self.app.isolate_endpoint(agent_id)
+        _InfoDialog(self, "Isolation Queued",
+                    f"Isolation command #{command_id} queued for {hostname or agent_id}. "
+                    "It will apply within one agent poll interval and the endpoint will show as ISOLATED.")
+        self._refresh_agents()
+
+    def _release_endpoint(self, agent_id, hostname):
+        command_id = self.app.release_endpoint(agent_id)
+        _InfoDialog(self, "Release Queued",
+                    f"Release command #{command_id} queued for {hostname or agent_id}. "
+                    "Network access is restored on the endpoint's next check-in.")
+        self._refresh_agents()
+
+    def _scan_endpoint(self, agent_id, hostname, ip_address):
+        if not ip_address:
+            _InfoDialog(self, "Scan Ports", "No IP address reported for this endpoint yet.")
+            return
+        _EndpointPortScanWindow(self, self.app, self.db, agent_id, hostname, ip_address)
 
     def _agent_details(self, agent_id, hostname):
         snapshot = self.db.get_agent_snapshot(agent_id)
@@ -1528,3 +1577,145 @@ class _AddRuleDialog(ctk.CTkToplevel):
         if self.on_saved:
             self.on_saved()
         self.destroy()
+
+
+class _ConfirmDialog(ctk.CTkToplevel):
+    def __init__(self, master, title, message):
+        super().__init__(master)
+        self.confirmed = False
+        self.title(title)
+        self.geometry("460x260")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        ctk.CTkLabel(self, text=title, text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=17, weight="bold")).pack(anchor="w", padx=20, pady=(18, 6))
+        ctk.CTkLabel(self, text=message, text_color=theme.TEXT_SOFT, font=ctk.CTkFont(size=12),
+                     wraplength=420, justify="left").pack(anchor="w", padx=20)
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=18, side="bottom")
+        ctk.CTkButton(row, text="Cancel", width=100, height=36, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self.destroy).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(row, text="Isolate", width=120, height=36, fg_color=theme.ACCENT_RED_DARK,
+                      hover_color=theme.ACCENT_RED_DARK_HOVER, command=self._confirm).pack(side="right")
+
+    def _confirm(self):
+        self.confirmed = True
+        self.destroy()
+
+
+class _EndpointPortScanWindow(ctk.CTkToplevel):
+    """Active nmap scan of an endpoint's IP, compared to what the agent reports.
+
+    An externally-open port that the agent does NOT report as a listener can
+    indicate something hiding from the host (rootkit / injected implant).
+    """
+
+    def __init__(self, master, app, db, agent_id, hostname, ip_address):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.agent_id = agent_id
+        self.ip_address = ip_address
+        self.title(f"Port scan · {hostname or agent_id}")
+        self.geometry("760x560")
+        self.minsize(620, 460)
+        self.configure(fg_color=theme.BG_DEEP)
+        self.attributes("-topmost", True)
+        self.transient(master)
+        apply_window_icon(self)
+
+        ctk.CTkLabel(self, text=f"Active port scan · {hostname or agent_id} ({ip_address})",
+                     text_color=theme.TEXT_PRIMARY, font=ctk.CTkFont(size=18, weight="bold")).pack(
+            anchor="w", padx=18, pady=(16, 4))
+        ctk.CTkLabel(self, text="External nmap view vs. the agent's self-reported listeners and connections.",
+                     text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=12)).pack(anchor="w", padx=18)
+
+        self.output = ctk.CTkTextbox(self, fg_color=theme.BG_CONSOLE, corner_radius=12, text_color=theme.TEXT_SOFT,
+                                     font=ctk.CTkFont(family="Consolas", size=12), wrap="none")
+        self.output.pack(fill="both", expand=True, padx=18, pady=12)
+        self.output.insert("end", f"Scanning {ip_address} … this can take a few seconds.\n")
+        self.output.configure(state="disabled")
+
+        ctk.CTkButton(self, text="Close", height=34, width=120, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self.destroy).pack(pady=(0, 14))
+
+        threading.Thread(target=self._run_scan, daemon=True).start()
+
+    def _run_scan(self):
+        try:
+            data = self.app.scan_endpoint_ports(self.ip_address)
+        except Exception as exc:  # scanner already guards; belt-and-suspenders for the UI
+            self._safe_render(f"[ERROR] Scan failed: {exc}\n")
+            return
+        self._safe_render(self._format(data))
+
+    def _safe_render(self, text):
+        try:
+            self.after(0, lambda: self._render(text))
+        except Exception:
+            pass
+
+    def _render(self, text):
+        self.output.configure(state="normal")
+        self.output.delete("0.0", "end")
+        self.output.insert("end", text)
+        self.output.configure(state="disabled")
+
+    def _self_reported(self):
+        snap = self.db.get_agent_snapshot(self.agent_id)
+        listeners, connections = set(), []
+        if snap:
+            try:
+                data = json.loads(snap["data"])
+                net = data.get("network", {}) or {}
+                for item in net.get("listening", []):
+                    port = str(item.get("local", "")).rsplit(":", 1)[-1]
+                    if port.isdigit():
+                        listeners.add(int(port))
+                connections = net.get("connections", [])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return listeners, connections
+
+    def _format(self, data):
+        external_open = set()
+        lines = [f"External nmap scan of {self.ip_address}", "=" * 60]
+        if not data:
+            lines.append("No response (host down, filtered, or nmap unavailable).")
+        for device in data:
+            open_ports = device.get("ports", [])
+            summary = device.get("port_scan_summary", {})
+            lines.append(f"Host {device.get('ip')} — state {device.get('status', '?')}, "
+                         f"open {summary.get('open', 0)}, closed {summary.get('closed', 0)}, "
+                         f"filtered {summary.get('filtered', 0)}")
+            for item in open_ports:
+                port = int(item["port"])
+                external_open.add(port)
+                svc = self.app.port_definitions.get(port, item.get("name", "?"))
+                lines.append(f"  OPEN  {port:<6} {svc}")
+            if not open_ports:
+                lines.append("  (no tracked ports open externally)")
+
+        listeners, connections = self._self_reported()
+        lines.append("")
+        lines.append("Agent self-reported listeners: " +
+                     (", ".join(str(p) for p in sorted(listeners)) or "none"))
+
+        hidden = external_open - listeners
+        if hidden:
+            lines.append("")
+            lines.append("⚠ Ports OPEN externally but NOT reported by the agent (possible hidden service):")
+            lines.append("  " + ", ".join(str(p) for p in sorted(hidden)))
+        elif external_open:
+            lines.append("External open ports all match agent listeners — consistent.")
+
+        lines.append("")
+        lines.append(f"Active connections reported by the agent ({len(connections)}):")
+        for conn in connections[:30]:
+            lines.append(f"  {conn.get('proto',''):<5}{conn.get('local',''):<24}"
+                         f"-> {conn.get('remote',''):<24}{conn.get('process','')}")
+        if not connections:
+            lines.append("  (none)")
+        return "\n".join(lines)

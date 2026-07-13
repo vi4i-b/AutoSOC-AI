@@ -86,6 +86,9 @@ class _CollectorHandler(BaseHTTPRequestHandler):
         if path == "/api/v1/ping":
             self._send_json(200, {"ok": True, "service": "autosoc-collector"})
             return
+        if path == "/api/v1/commands":
+            self._handle_commands_poll()
+            return
         if path in ("/agent", "/install", "/autosoc_agent.py"):
             self._serve_agent_script()
             return
@@ -171,8 +174,47 @@ class _CollectorHandler(BaseHTTPRequestHandler):
             self._handle_enroll(data)
         elif path == "/api/v1/report":
             self._handle_report(data)
+        elif path == "/api/v1/command_result":
+            self._handle_command_result(data)
         else:
             self._send_json(404, {"ok": False, "error": "not found"})
+
+    def _handle_commands_poll(self):
+        # Auth required: the agent presents its bearer token.
+        if not self._authorized():
+            self._send_json(401, {"ok": False, "error": "invalid or missing token"})
+            return
+        from urllib.parse import parse_qs, urlparse
+
+        query = parse_qs(urlparse(self.path).query)
+        agent_id = (query.get("agent_id", [""])[0]).strip()
+        if not agent_id:
+            self._send_json(400, {"ok": False, "error": "agent_id required"})
+            return
+        commands = self.db.claim_agent_commands(agent_id)
+        self._send_json(200, {"ok": True, "commands": commands})
+
+    def _handle_command_result(self, data):
+        command_id = data.get("command_id")
+        status = str(data.get("status", "failed"))
+        result = str(data.get("result", ""))
+        if command_id is None:
+            self._send_json(400, {"ok": False, "error": "command_id required"})
+            return
+        row = self.db.complete_agent_command(command_id, status, result)
+        # Reflect isolation state so the console shows it.
+        if row is not None:
+            command = row["command"]
+            agent_id = row["agent_id"]
+            if command == "isolate" and status == "done":
+                self.db.set_agent_isolated(agent_id, True)
+                self.db.add_security_event("endpoint_isolated", "High", agent_id,
+                                           f"Endpoint {agent_id} isolated from the network. {result[:200]}")
+            elif command == "unisolate" and status == "done":
+                self.db.set_agent_isolated(agent_id, False)
+                self.db.add_audit_event("endpoint_released", agent_id,
+                                        f"Endpoint {agent_id} network isolation released.")
+        self._send_json(200, {"ok": True})
 
     def _handle_enroll(self, data):
         agent_id = str(data.get("agent_id", "")).strip()

@@ -129,6 +129,63 @@ class CollectorServerTests(unittest.TestCase):
         status, _ = self._post("/api/v1/report", {"hostname": "x"}, token=self.token)
         self.assertEqual(status, 400)
 
+    def _get(self, path, token=None):
+        url = f"http://127.0.0.1:{self.port}{path}"
+        req = urllib.request.Request(url, method="GET")
+        if token is not None:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            return exc.code, None
+
+    def test_command_channel_flow(self):
+        self.db.mark_agent_seen("agent_c", hostname="h", platform="Linux")
+        cid = self.db.enqueue_agent_command("agent_c", "isolate", requested_by="analyst")
+
+        # poll requires auth
+        status, _ = self._get("/api/v1/commands?agent_id=agent_c", token="bad")
+        self.assertEqual(status, 401)
+
+        status, body = self._get("/api/v1/commands?agent_id=agent_c", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["commands"]), 1)
+        self.assertEqual(body["commands"][0]["command"], "isolate")
+
+        # claimed → second poll is empty
+        _status, body2 = self._get("/api/v1/commands?agent_id=agent_c", token=self.token)
+        self.assertEqual(body2["commands"], [])
+
+        # result marks the agent isolated
+        self._post("/api/v1/command_result",
+                   {"agent_id": "agent_c", "command_id": cid, "status": "done", "result": "ok"},
+                   token=self.token)
+        agent = [a for a in self.db.list_agents() if a["agent_id"] == "agent_c"][0]
+        self.assertEqual(agent["isolated"], 1)
+
+
+class AgentIsolationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.agent = _load_agent_module()
+
+    def test_isolation_commands_keep_server_reachable(self):
+        rules = self.agent.build_isolation_commands("192.168.0.7")
+        self.assertTrue(all("AUTOSOC_ISOLATION" in r for r in rules))
+        drops = [r for r in rules if r[-1] == "DROP"]
+        self.assertEqual(len(drops), 2)  # INPUT + OUTPUT default drop
+        server_allows = [r for r in rules if "192.168.0.7" in r]
+        self.assertEqual(len(server_allows), 2)  # in + out
+
+    def test_isolation_without_server_ip(self):
+        rules = self.agent.build_isolation_commands("")
+        self.assertTrue(any(r[-1] == "DROP" for r in rules))
+
+    def test_unknown_command_is_failed(self):
+        status, _msg = self.agent.execute_command("http://x", {"command": "nope"})
+        self.assertEqual(status, "failed")
+
 
 class AgentModuleTests(unittest.TestCase):
     @classmethod

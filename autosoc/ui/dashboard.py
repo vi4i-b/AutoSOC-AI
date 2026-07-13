@@ -1624,3 +1624,25 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
 
     def reload_rules(self):
         self.rule_engine.reload()
+
+    # ── endpoint response actions ────────────────────────────────────
+
+    def isolate_endpoint(self, agent_id):
+        """Queue a network-isolation command; the agent applies it on its next poll."""
+        actor = self.current_user.get("username", "analyst")
+        command_id = self.db.enqueue_agent_command(agent_id, "isolate", requested_by=actor)
+        self.db.add_audit_event("endpoint_isolation_requested", actor,
+                                f"Isolation queued for {agent_id} (command #{command_id}).")
+        return command_id
+
+    def release_endpoint(self, agent_id):
+        actor = self.current_user.get("username", "analyst")
+        command_id = self.db.enqueue_agent_command(agent_id, "unisolate", requested_by=actor)
+        self.db.add_audit_event("endpoint_release_requested", actor,
+                                f"Release queued for {agent_id} (command #{command_id}).")
+        return command_id
+
+    def scan_endpoint_ports(self, ip_address):
+        """Run the nmap scanner against an endpoint's IP (external port view)."""
+        scanner = NetworkScanner()
+        return scanner.scan_network(ip_address, ports=list(self.port_definitions.keys()))

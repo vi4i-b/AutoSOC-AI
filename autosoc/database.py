@@ -306,6 +306,25 @@ class SOCDatabase:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_commands (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    command TEXT NOT NULL,
+                    args TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    result TEXT DEFAULT '',
+                    requested_by TEXT DEFAULT '',
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+                """
+            )
+
+            # Network-isolation flag for endpoints (set from command results).
+            self._ensure_column(cursor, "agents", "isolated", "INTEGER NOT NULL DEFAULT 0")
+
             try:
                 cursor.execute(
                     """
@@ -880,11 +899,22 @@ class SOCDatabase:
             cursor = self.conn.cursor()
             cursor.execute(
                 """
-                SELECT id, agent_id, hostname, platform, ip_address, status, labels, last_seen, created_at
+                SELECT id, agent_id, hostname, platform, ip_address, status, labels, last_seen,
+                       created_at, COALESCE(isolated, 0) AS isolated
                 FROM agents ORDER BY id DESC
                 """
             )
             return cursor.fetchall()
+
+    def set_agent_isolated(self, agent_id, isolated):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE agents SET isolated = ? WHERE agent_id = ?",
+                (1 if isolated else 0, agent_id),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
 
     def set_agent_status(self, agent_id, status):
         with self._lock:
@@ -1194,3 +1224,65 @@ class SOCDatabase:
             cursor.execute("DELETE FROM detection_rules WHERE rule_key = ?", (rule_key,))
             self.conn.commit()
             return cursor.rowcount > 0
+
+    # ── agent command channel ────────────────────────────────────────
+
+    def enqueue_agent_command(self, agent_id, command, args="", requested_by=""):
+        agent_id = (agent_id or "").strip()
+        command = (command or "").strip()
+        if not agent_id or not command:
+            return None
+        with self._lock:
+            now = self._now()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO agent_commands (agent_id, command, args, status, requested_by, created_at, updated_at)
+                VALUES (?, ?, ?, 'pending', ?, ?, ?)
+                """,
+                (agent_id, command, args, requested_by, now, now),
+            )
+            self.conn.commit()
+            return cursor.lastrowid
+
+    def claim_agent_commands(self, agent_id):
+        """Return pending commands for an agent and mark them 'sent' atomically."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT id, command, args FROM agent_commands WHERE agent_id = ? AND status = 'pending' ORDER BY id ASC",
+                (agent_id,),
+            )
+            rows = cursor.fetchall()
+            if rows:
+                ids = [row["id"] for row in rows]
+                cursor.executemany(
+                    "UPDATE agent_commands SET status = 'sent', updated_at = ? WHERE id = ?",
+                    [(self._now(), cid) for cid in ids],
+                )
+                self.conn.commit()
+            return [{"id": row["id"], "command": row["command"], "args": row["args"]} for row in rows]
+
+    def complete_agent_command(self, command_id, status, result=""):
+        status = status if status in ("done", "failed") else "failed"
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE agent_commands SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                (status, str(result)[:2000], self._now(), int(command_id)),
+            )
+            self.conn.commit()
+            cursor.execute("SELECT agent_id, command FROM agent_commands WHERE id = ?", (int(command_id),))
+            return cursor.fetchone()
+
+    def list_agent_commands(self, agent_id, limit=30):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, command, args, status, result, requested_by, created_at, updated_at
+                FROM agent_commands WHERE agent_id = ? ORDER BY id DESC LIMIT ?
+                """,
+                (agent_id, int(limit)),
+            )
+            return cursor.fetchall()

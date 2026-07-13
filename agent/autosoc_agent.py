@@ -36,6 +36,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -398,6 +399,133 @@ def post(server, path, token, payload):
         return False, str(exc)
 
 
+def get(server, path, token, params=None):
+    url = server.rstrip("/") + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(url, method="GET")
+    request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            return True, json.loads(body) if body else {}
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}: {exc.reason}"
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        return False, str(exc)
+
+
+# ── endpoint isolation ───────────────────────────────────────────────
+
+ISOLATION_COMMENT = "AUTOSOC_ISOLATION"
+
+
+def _server_host(server):
+    return urllib.parse.urlparse(server if "://" in server else "http://" + server).hostname or ""
+
+
+def build_isolation_commands(server_ip):
+    """iptables rules that cut the host off the network but keep the AutoSOC
+    server reachable (so isolation can be released remotely). Returned as a
+    list so the logic is testable without touching the firewall."""
+    tag = ["-m", "comment", "--comment", ISOLATION_COMMENT]
+    rules = [
+        ["-A", "INPUT", "-i", "lo", *tag, "-j", "ACCEPT"],
+        ["-A", "OUTPUT", "-o", "lo", *tag, "-j", "ACCEPT"],
+        ["-A", "INPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", *tag, "-j", "ACCEPT"],
+        ["-A", "OUTPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", *tag, "-j", "ACCEPT"],
+    ]
+    if server_ip:
+        rules.append(["-A", "OUTPUT", "-d", server_ip, *tag, "-j", "ACCEPT"])
+        rules.append(["-A", "INPUT", "-s", server_ip, *tag, "-j", "ACCEPT"])
+    # DNS so the server hostname keeps resolving.
+    rules.append(["-A", "OUTPUT", "-p", "udp", "--dport", "53", *tag, "-j", "ACCEPT"])
+    # Everything else is dropped.
+    rules.append(["-A", "OUTPUT", *tag, "-j", "DROP"])
+    rules.append(["-A", "INPUT", *tag, "-j", "DROP"])
+    return rules
+
+
+def _is_root():
+    try:
+        return os.geteuid() == 0
+    except AttributeError:
+        return False
+
+
+def isolate_host(server):
+    if os.name == "nt":
+        res = _run_check(["netsh", "advfirewall", "set", "allprofiles", "firewallpolicy",
+                          "blockinbound,blockoutbound"])
+        return ("done", "Windows firewall set to block inbound+outbound.") if res else \
+               ("failed", "netsh failed (run the agent as Administrator).")
+    if not _is_root():
+        return "failed", "Isolation needs root. Run the agent with sudo."
+    server_ip = _resolve(_server_host(server))
+    unisolate_host(server)  # clear any prior isolation rules first
+    for rule in build_isolation_commands(server_ip):
+        _run(["iptables", *rule])
+    return "done", f"Host isolated via iptables (AutoSOC server {server_ip} kept reachable)."
+
+
+def unisolate_host(server):
+    if os.name == "nt":
+        _run_check(["netsh", "advfirewall", "set", "allprofiles", "firewallpolicy",
+                    "blockinbound,allowoutbound"])
+        return "done", "Windows firewall policy restored."
+    if not _is_root():
+        return "failed", "Release needs root. Run the agent with sudo."
+    # Delete every rule tagged with our comment, on every chain.
+    for _ in range(40):
+        out = _run(["iptables", "-S"])
+        target = None
+        for line in out.splitlines():
+            if ISOLATION_COMMENT in line and line.startswith("-A "):
+                target = line[3:].split()
+                break
+        if not target:
+            break
+        _run(["iptables", "-D", *target])
+    return "done", "Network isolation released."
+
+
+def _resolve(host):
+    try:
+        return socket.gethostbyname(host) if host else ""
+    except OSError:
+        return host
+
+
+def _run_check(args):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=15, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def execute_command(server, command):
+    name = command.get("command")
+    if name == "isolate":
+        return isolate_host(server)
+    if name == "unisolate":
+        return unisolate_host(server)
+    return "failed", f"Unknown command: {name}"
+
+
+def poll_and_execute(server, token, agent_id):
+    ok, data = get(server, "/api/v1/commands", token, params={"agent_id": agent_id})
+    if not ok or not isinstance(data, dict):
+        return
+    for command in data.get("commands", []):
+        try:
+            status, result = execute_command(server, command)
+        except (OSError, subprocess.SubprocessError) as exc:
+            status, result = "failed", str(exc)
+        print(f"[autosoc-agent] command {command.get('command')} -> {status}: {result}")
+        post(server, "/api/v1/command_result", token,
+             {"agent_id": agent_id, "command_id": command.get("id"), "status": status, "result": result})
+
+
 # ── main loop ────────────────────────────────────────────────────────
 
 def run(args):
@@ -434,6 +562,9 @@ def run(args):
                   f"procs={telemetry['processes']['count']})")
         else:
             print(f"[autosoc-agent] {stamp} report failed: {result}", file=sys.stderr)
+
+        # Pull and run any pending commands (e.g. network isolation).
+        poll_and_execute(args.server, args.token, agent_id)
 
         if args.once:
             return 0 if ok else 1
