@@ -80,6 +80,7 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         self.guard = NetworkGuard(self.on_threat_detected)
         self.port_canary = PortCanary(self.on_canary_trip)
         self.soc_console = None
+        self.collector = None
         self.last_scan_data = []
         self.scan_summary = ""
         self.ai_loader_job = None
@@ -1445,3 +1446,65 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
             self.soc_console.focus_force()
             return
         self.soc_console = SOCConsoleWindow(self, self.db, self.current_user)
+
+    # ── endpoint collector ───────────────────────────────────────────
+
+    def start_collector(self):
+        from autosoc.agents.server import CollectorService
+
+        if self.collector is None:
+            self.collector = CollectorService(self.db)
+        ok, message = self.collector.start()
+        self.db.add_audit_event(
+            "collector_started" if ok else "collector_start_failed",
+            self.current_user.get("username", "local_operator"),
+            message,
+        )
+        return ok, message
+
+    def stop_collector(self):
+        if self.collector is not None and self.collector.running:
+            self.collector.stop()
+            self.db.add_audit_event("collector_stopped",
+                                    self.current_user.get("username", "local_operator"),
+                                    "Endpoint collector stopped.")
+
+    def collector_running(self):
+        return bool(self.collector is not None and self.collector.running)
+
+    def collector_bind(self):
+        if self.collector is not None:
+            return self.collector.address()
+        from autosoc.agents.server import DEFAULT_PORT
+
+        return ("0.0.0.0", int(os.getenv("AUTOSOC_COLLECTOR_PORT") or DEFAULT_PORT))
+
+    def collector_lan_url(self):
+        """A URL an endpoint on the LAN can actually reach (never 0.0.0.0)."""
+        _host, port = self.collector_bind()
+        return f"http://{self._primary_lan_ip()}:{port}"
+
+    @staticmethod
+    def _primary_lan_ip():
+        """The source IP this host uses to reach the network (real LAN address)."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        except OSError:
+            try:
+                return socket.gethostbyname(socket.gethostname())
+            except OSError:
+                return "127.0.0.1"
+        finally:
+            sock.close()
+
+    def collector_token(self):
+        return self.db.get_or_create_ingestion_token()
+
+    def regenerate_collector_token(self):
+        token = self.db.regenerate_ingestion_token()
+        self.db.add_audit_event("ingestion_token_regenerated",
+                                self.current_user.get("username", "local_operator"),
+                                "Agent ingestion token regenerated.")
+        return token

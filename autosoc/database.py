@@ -256,6 +256,16 @@ class SOCDatabase:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_snapshots (
+                    agent_id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT
+                )
+                """
+            )
+
             try:
                 cursor.execute(
                     """
@@ -898,3 +908,100 @@ class SOCDatabase:
             cursor = self.conn.cursor()
             cursor.execute(f"SELECT COUNT(*) FROM {table}")
             return cursor.fetchone()[0]
+
+    # ── agent collector ──────────────────────────────────────────────
+
+    def get_or_create_ingestion_token(self):
+        """Bearer token agents must present to the collector. Generated on first use."""
+        token = (self.get_setting("ingestion_token", "") or "").strip()
+        if not token:
+            token = "ingest_" + secrets.token_urlsafe(24)
+            self.set_setting("ingestion_token", token)
+        return token
+
+    def regenerate_ingestion_token(self):
+        token = "ingest_" + secrets.token_urlsafe(24)
+        self.set_setting("ingestion_token", token)
+        return token
+
+    def verify_ingestion_token(self, presented) -> bool:
+        import hmac
+
+        expected = self.get_or_create_ingestion_token()
+        return hmac.compare_digest(str(presented or ""), expected)
+
+    def mark_agent_seen(self, agent_id, hostname="", platform="", ip_address="", status="online"):
+        """Upsert an agent on enroll/report and mark it online with a fresh last_seen."""
+        agent_id = (agent_id or "").strip()
+        if not agent_id:
+            return False
+        with self._lock:
+            now = self._now()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO agents (agent_id, hostname, platform, ip_address, status, last_seen, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    hostname = excluded.hostname,
+                    platform = excluded.platform,
+                    ip_address = excluded.ip_address,
+                    status = excluded.status,
+                    last_seen = excluded.last_seen
+                """,
+                (agent_id, hostname or "", platform or "", ip_address or "", status, now, now),
+            )
+            self.conn.commit()
+            return True
+
+    def save_agent_snapshot(self, agent_id, data_json):
+        agent_id = (agent_id or "").strip()
+        if not agent_id:
+            return
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO agent_snapshots (agent_id, data, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    data = excluded.data,
+                    updated_at = excluded.updated_at
+                """,
+                (agent_id, data_json, self._now()),
+            )
+            self.conn.commit()
+
+    def get_agent_snapshot(self, agent_id):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT data, updated_at FROM agent_snapshots WHERE agent_id = ?", (agent_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {"data": row["data"], "updated_at": row["updated_at"]}
+
+    def mark_stale_agents(self, stale_seconds=120):
+        """Flip agents that have not reported within the window to 'offline'."""
+        import time as _time
+        from datetime import datetime as _dt
+
+        cutoff = _time.time() - stale_seconds
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT agent_id, last_seen, status FROM agents WHERE status = 'online'")
+            rows = cursor.fetchall()
+            flipped = []
+            for row in rows:
+                last_seen = row["last_seen"]
+                try:
+                    ts = _dt.strptime(last_seen, "%d.%m.%Y %H:%M:%S").timestamp()
+                except (TypeError, ValueError):
+                    continue
+                if ts < cutoff:
+                    flipped.append(row["agent_id"])
+            for agent_id in flipped:
+                cursor.execute("UPDATE agents SET status = 'offline' WHERE agent_id = ?", (agent_id,))
+            if flipped:
+                self.conn.commit()
+            return flipped

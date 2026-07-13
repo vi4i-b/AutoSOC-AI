@@ -42,6 +42,65 @@ coverage (e.g. against MITRE ATT&CK).
 The core promise of AutoSOC is **centralization**: one place that ingests
 telemetry from many machines. There are two complementary paths.
 
+### 2.0 What's implemented today (quick start)
+
+A working agent + collector already ships in the app:
+
+1. Open the **SOC Console → Endpoints & Agents** tab and click
+   **Start Collector**. AutoSOC starts an HTTP collector (default port 8787)
+   and shows a one-line install command with your server's LAN address and an
+   ingestion token.
+2. On the target server, run that command:
+
+   ```bash
+   curl -fsSL http://<autosoc-ip>:8787/agent | sudo python3 - \
+     --server http://<autosoc-ip>:8787 --token <ingestion-token>
+   ```
+
+   The collector serves the agent script itself over `GET /agent`, so nothing
+   needs to be pre-installed — just Python 3 (already on any Linux server).
+   `sudo` lets the agent read system logs like `/var/log/auth.log`.
+3. Within a few seconds the endpoint appears in the tab as **online**, and
+   **Details** shows its hostname, OS, primary/all IPv4 addresses, uptime,
+   logged-in users, and top processes. Its log lines flow into **Log Search**.
+
+Run the agent as a background service to keep it reporting:
+
+```bash
+# quick background run
+nohup sudo python3 autosoc_agent.py --server http://<ip>:8787 --token <token> \
+  --interval 30 >/var/log/autosoc-agent.log 2>&1 &
+
+# or as a systemd unit (recommended for servers)
+sudo tee /etc/systemd/system/autosoc-agent.service >/dev/null <<'UNIT'
+[Unit]
+Description=AutoSOC endpoint agent
+After=network-online.target
+[Service]
+ExecStart=/usr/bin/python3 /opt/autosoc/autosoc_agent.py \
+  --server http://<autosoc-ip>:8787 --token <ingestion-token> --interval 30
+Restart=always
+User=root
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl enable --now autosoc-agent
+```
+
+The agent uses **only the Python standard library**, so it runs on any host
+with Python 3 — no dependencies to install.
+
+**What the agent collects today:** hostname/FQDN, OS/platform, primary LAN IP
+and all IPv4 addresses, uptime, logged-in users, running processes (PID, CPU%,
+MEM%, name), and new lines from `/var/log/auth.log`, `/var/log/secure`,
+`/var/log/syslog` (plus any `--log-file` you add).
+
+**Security of the current transport:** the agent authenticates with a bearer
+token (constant-time compared, revocable via **Regenerate Token**); request
+bodies are size-capped and never executed. It is plain HTTP — intended for a
+trusted LAN or behind a TLS reverse proxy. The mTLS/pull-action hardening
+below is the production next step.
+
 ### 2.1 Agentless collection (fastest to ship)
 
 Good for infrastructure you already control, no software to install on every
@@ -55,8 +114,9 @@ box:
 - **API/webhook ingestion** — cloud services (Microsoft 365, Google
   Workspace, AWS CloudTrail, Cloudflare) push events to an AutoSOC webhook.
 
-AutoSOC already has an `ingested_logs` store and a Log Search UI; the missing
-piece is a listener service that writes into it.
+The agent path (2.0) already feeds the `ingested_logs` store and Log Search;
+agentless syslog/webhook listeners writing into the same store are the next
+addition for onboarding devices that can't run an agent.
 
 ### 2.2 The AutoSOC agent (deeper visibility)
 

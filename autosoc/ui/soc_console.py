@@ -17,8 +17,7 @@ Everything is backed by the same SQLite store as the dashboard, so the two
 windows stay in sync.
 """
 
-import secrets
-import tkinter as tk
+import json
 from datetime import datetime
 
 import customtkinter as ctk
@@ -45,6 +44,7 @@ SEVERITY_COLORS = {
 class SOCConsoleWindow(ctk.CTkToplevel):
     def __init__(self, master, db, current_user):
         super().__init__(master)
+        self.app = master  # the dashboard app owns the collector service
         self.db = db
         self.current_user = current_user or {}
         self.actor = self.current_user.get("username", "analyst")
@@ -464,28 +464,134 @@ class SOCConsoleWindow(ctk.CTkToplevel):
     def _build_agents_tab(self):
         tab = self.tab_agents
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(1, weight=1)
+        tab.grid_rowconfigure(2, weight=1)
 
-        bar = ctk.CTkFrame(tab, fg_color="transparent")
-        bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
-        ctk.CTkLabel(bar, text="Registered endpoints reporting to this AutoSOC instance.",
-                     text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=12)).pack(side="left", padx=2)
-        ctk.CTkButton(bar, text="Generate Enrollment Token", width=210, height=30, corner_radius=10,
-                      fg_color=theme.ACCENT_BLUE, hover_color=theme.ACCENT_BLUE_HOVER,
-                      command=self._generate_enrollment_token).pack(side="right", padx=6)
+        # ── Collector control panel ─────────────────────────────────
+        collector = ctk.CTkFrame(tab, fg_color=theme.BG_PANEL, corner_radius=14)
+        collector.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        collector.grid_columnconfigure(0, weight=1)
+
+        head = ctk.CTkFrame(collector, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
+        head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(head, text="Endpoint Collector", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, sticky="w")
+        self.collector_status = ctk.CTkLabel(head, text="", text_color=theme.TEXT_MUTED,
+                                             font=ctk.CTkFont(size=12, weight="bold"))
+        self.collector_status.grid(row=0, column=1, sticky="e")
+
+        ctk.CTkLabel(
+            collector,
+            text=("Start the collector, then run the command below on any Linux/Windows server. "
+                  "It enrolls and streams logs, processes, and network info back here."),
+            text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left",
+            wraplength=900,
+        ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 8))
+
+        btn_row = ctk.CTkFrame(collector, fg_color="transparent")
+        btn_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.btn_collector_toggle = ctk.CTkButton(
+            btn_row, text="Start Collector", width=150, height=32, corner_radius=10,
+            fg_color=theme.ACCENT_GREEN_DARK, hover_color=theme.ACCENT_GREEN_DARK_HOVER,
+            command=self._toggle_collector)
+        self.btn_collector_toggle.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="Copy Install Command", width=180, height=32, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=self._copy_install_command).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="Show Token", width=120, height=32, corner_radius=10,
+                      fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
+                      border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
+                      command=self._show_token).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="Regenerate Token", width=150, height=32, corner_radius=10,
+                      fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
+                      border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
+                      command=self._regenerate_token).pack(side="left")
+
+        self.install_box = ctk.CTkTextbox(collector, height=64, fg_color=theme.BG_CONSOLE, corner_radius=10,
+                                          text_color=theme.ACCENT_CYAN, font=ctk.CTkFont(family="Consolas", size=11),
+                                          wrap="word")
+        self.install_box.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
+
+        ctk.CTkLabel(tab, text="Enrolled endpoints", text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12, weight="bold")).grid(row=1, column=0, sticky="w", padx=14, pady=(2, 2))
 
         self.agent_list = self._scroll_frame(tab)
-        self.agent_list.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.agent_list.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self._refresh_collector_panel()
+
+    def _install_command(self):
+        url = self.app.collector_lan_url()
+        token = self.app.collector_token()
+        return f"curl -fsSL {url}/agent | sudo python3 - --server {url} --token {token}"
+
+    def _refresh_collector_panel(self):
+        if not hasattr(self, "collector_status"):
+            return
+        running = self.app.collector_running()
+        if running:
+            host, port = self.app.collector_bind()
+            self.collector_status.configure(text=f"● running on {host}:{port}", text_color=theme.STATUS_GOOD)
+            self.btn_collector_toggle.configure(text="Stop Collector", fg_color=theme.ACCENT_RED_DARK,
+                                                hover_color=theme.ACCENT_RED_DARK_HOVER)
+        else:
+            self.collector_status.configure(text="● stopped", text_color=theme.TEXT_MUTED)
+            self.btn_collector_toggle.configure(text="Start Collector", fg_color=theme.ACCENT_GREEN_DARK,
+                                                hover_color=theme.ACCENT_GREEN_DARK_HOVER)
+        self.install_box.configure(state="normal")
+        self.install_box.delete("0.0", "end")
+        if running:
+            self.install_box.insert("end", self._install_command())
+        else:
+            self.install_box.insert("end", "Start the collector to reveal the one-line install command.")
+        self.install_box.configure(state="disabled")
+
+    def _toggle_collector(self):
+        if self.app.collector_running():
+            self.app.stop_collector()
+        else:
+            ok, message = self.app.start_collector()
+            if not ok:
+                _InfoDialog(self, "Collector", f"Could not start collector:\n\n{message}")
+        self._refresh_collector_panel()
+        self._refresh_agents()
+
+    def _copy_install_command(self):
+        if not self.app.collector_running():
+            _InfoDialog(self, "Collector", "Start the collector first.")
+            return
+        command = self._install_command()
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(command)
+        except Exception:
+            pass
+        _InfoDialog(self, "Install Command",
+                    "Run this on the target server (copied to clipboard):\n\n" + command +
+                    "\n\nTip: run with sudo so the agent can read system logs like /var/log/auth.log.")
+
+    def _show_token(self):
+        _InfoDialog(self, "Ingestion Token",
+                    "Agents authenticate to the collector with this bearer token:\n\n" +
+                    self.app.collector_token() +
+                    "\n\nKeep it secret. Regenerate it to revoke all current agents.")
+
+    def _regenerate_token(self):
+        self.app.regenerate_collector_token()
+        self._refresh_collector_panel()
+        _InfoDialog(self, "Token Regenerated",
+                    "A new ingestion token is now active. Existing agents must be restarted with the "
+                    "new install command to reconnect.")
 
     def _refresh_agents(self):
         self._clear(self.agent_list)
+        self.db.mark_stale_agents()
         agents = self.db.list_agents()
         if not agents:
             ctk.CTkLabel(
                 self.agent_list,
                 text=("No endpoints enrolled yet.\n\n"
-                      "Generate an enrollment token, then install the AutoSOC agent on a server or workstation "
-                      "and register it against this token. See docs/AGENTS_AND_ROADMAP.md for the agent design."),
+                      "Start the collector above, copy the install command, and run it on a server. "
+                      "It will appear here within a few seconds with its logs, processes, and IP."),
                 text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=12), justify="left",
             ).grid(row=0, column=0, sticky="w", padx=12, pady=12)
             return
@@ -507,44 +613,62 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                      text_color=theme.TEXT_SOFT, font=ctk.CTkFont(size=13, weight="bold"),
                      anchor="w").grid(row=0, column=1, sticky="ew", padx=4, pady=(10, 0))
         detail = f"id: {agent_id}  ·  ip: {ip_address or '—'}  ·  status: {status}"
-        if labels:
-            detail += f"  ·  {labels}"
         detail += f"\nlast seen: {last_seen or 'never'}  ·  enrolled: {created_at}"
         ctk.CTkLabel(card, text=detail, text_color="#85a3bd", font=ctk.CTkFont(size=11),
                      anchor="w", justify="left").grid(row=1, column=1, sticky="ew", padx=4, pady=(0, 10))
 
-        ctk.CTkButton(card, text="Remove", width=80, height=28, corner_radius=10,
+        buttons = ctk.CTkFrame(card, fg_color="transparent")
+        buttons.grid(row=0, column=2, rowspan=2, padx=10, pady=8)
+        ctk.CTkButton(buttons, text="Details", width=80, height=28, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=lambda: self._agent_details(agent_id, hostname)).pack(pady=(0, 4))
+        ctk.CTkButton(buttons, text="Remove", width=80, height=28, corner_radius=10,
                       fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
                       border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
-                      command=lambda: self._remove_agent(agent_id)).grid(row=0, column=2, rowspan=2, padx=12, pady=10)
+                      command=lambda: self._remove_agent(agent_id)).pack()
+
+    def _agent_details(self, agent_id, hostname):
+        snapshot = self.db.get_agent_snapshot(agent_id)
+        if not snapshot:
+            _InfoDialog(self, f"Endpoint · {hostname or agent_id}",
+                        "No telemetry received yet. The agent reports host details on its first cycle.")
+            return
+        try:
+            data = json.loads(snapshot["data"])
+        except (json.JSONDecodeError, TypeError):
+            _InfoDialog(self, "Endpoint", "Telemetry could not be parsed.")
+            return
+
+        lines = [
+            f"Host: {data.get('hostname', '?')}  ({data.get('fqdn', '')})",
+            f"OS: {data.get('platform', '?')}",
+            f"Python: {data.get('python', '?')}",
+            f"Primary IP: {data.get('primary_ip', '?')}",
+            f"All IPv4: {', '.join(data.get('ipv4', [])) or '—'}",
+        ]
+        uptime = data.get("uptime_seconds")
+        if uptime:
+            lines.append(f"Uptime: {uptime // 3600}h {(uptime % 3600) // 60}m")
+        users = data.get("logged_in_users") or []
+        if users:
+            lines.append(f"Logged-in users: {', '.join(users)}")
+        lines.append(f"Snapshot updated: {snapshot['updated_at']}")
+
+        procs = data.get("processes", {})
+        lines.append("")
+        lines.append(f"Processes: {procs.get('count', 0)} total. Top by CPU:")
+        lines.append(f"  {'PID':<8}{'CPU%':<8}{'MEM%':<8}NAME")
+        for proc in procs.get("top", [])[:15]:
+            lines.append(f"  {str(proc.get('pid','')):<8}{str(proc.get('cpu','')):<8}"
+                         f"{str(proc.get('mem','')):<8}{proc.get('name','')}")
+
+        _InfoDialog(self, f"Endpoint · {hostname or agent_id}", "\n".join(lines))
 
     def _remove_agent(self, agent_id):
         self.db.delete_agent(agent_id)
         self.db.add_audit_event("agent_removed", self.actor, f"Agent {agent_id} removed.")
         self._refresh_agents()
         self._refresh_metrics()
-
-    def _generate_enrollment_token(self):
-        token = "enr_" + secrets.token_urlsafe(24)
-        agent_id = "agent_" + secrets.token_hex(6)
-        self.db.register_agent(agent_id=agent_id, enrollment_token=token, labels="pending-enrollment")
-        self.db.add_audit_event("agent_enrollment_token", self.actor,
-                                f"Enrollment token generated for {agent_id}.")
-        self._refresh_agents()
-        _InfoDialog(
-            self,
-            "Enrollment Token",
-            (
-                "Provision a new endpoint with these values.\n\n"
-                f"Agent ID:\n{agent_id}\n\n"
-                f"Enrollment token:\n{token}\n\n"
-                "On the endpoint, install the AutoSOC agent and run:\n"
-                f"  autosoc-agent enroll --server <this-host> \\\n"
-                f"    --agent-id {agent_id} --token <token>\n\n"
-                "The agent then ships logs and heartbeat to this console.\n"
-                "Design details: docs/AGENTS_AND_ROADMAP.md"
-            ),
-        )
 
     # ── Threat Intel (IOCs) ──────────────────────────────────────────
 

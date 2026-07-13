@@ -54,15 +54,32 @@ Click **Open SOC Console** in the left sidebar. Tabs:
 - **Triage Queue** — all security events, severity-filtered; promote to incident.
 - **Incidents** — case management with status, severity, assignee, MITRE
   ATT&CK technique, and investigation notes.
-- **Endpoints & Agents** — enrolled endpoints, health, and an enrollment-token
-  generator for onboarding new hosts.
+- **Endpoints & Agents** — start the built-in collector and onboard servers.
 - **Threat Intel** — IOC watchlist with add/lookup/match.
 - **Log Search** — free-text search over centrally ingested logs.
 - **Metrics** — open/critical/resolved cases, event volume, fleet size.
 
-See [docs/AGENTS_AND_ROADMAP.md](docs/AGENTS_AND_ROADMAP.md) for the endpoint-agent
-architecture (enrollment, mTLS, log shipping, response actions) and the
-product/monetization roadmap.
+### Endpoint agents (collect logs/processes/IP from any server)
+
+AutoSOC ships a working agent + collector. In **SOC Console → Endpoints &
+Agents**, click **Start Collector**, then run the shown one-liner on any
+server:
+
+```bash
+curl -fsSL http://<autosoc-ip>:8787/agent | sudo python3 - \
+  --server http://<autosoc-ip>:8787 --token <ingestion-token>
+```
+
+The endpoint enrolls and streams its **hostname, OS, LAN IPs, uptime, running
+processes, and system logs** (`/var/log/auth.log`, `syslog`, …) back to the
+console — visible under **Details** and **Log Search**. The agent is pure
+Python stdlib (no install needed) and authenticates with a revocable bearer
+token.
+
+See [docs/AGENTS_AND_ROADMAP.md](docs/AGENTS_AND_ROADMAP.md) for the full agent
+architecture (systemd service, mTLS/pull-action hardening) and the
+product/monetization roadmap. The agent script lives at
+[agent/autosoc_agent.py](agent/autosoc_agent.py).
 
 ## Project structure
 
@@ -82,6 +99,8 @@ autosoc/
 ├── security_utils.py    # PBKDF2 password hashing
 ├── validators.py        # input validation
 ├── ai/                  # AI providers (nvidia.py, expert.py)
+├── agents/              # endpoint collector
+│   └── server.py        #   HTTP collector (enroll/report, serves the agent)
 ├── phishing/            # anti-phishing engine
 │   ├── analyzer.py      #   orchestrator → PhishingReport
 │   ├── url_features.py  #   URL heuristics (offline)
@@ -103,6 +122,7 @@ autosoc/
     ├── dashboard.py     #   main dashboard (logic)
     ├── dashboard_layout.py  # dashboard widgets
     └── soc_console.py   #   SOC Operations Console
+agent/autosoc_agent.py   # standalone endpoint agent (stdlib only)
 tests/                   # unit tests
 ```
 

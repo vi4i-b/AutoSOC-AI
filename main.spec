@@ -26,6 +26,8 @@ a = Analysis(
         ('assets/autosoc_logo.png', 'assets'),
         ('assets/autosoc_logo_login.png', 'assets'),
         ('assets/autosoc_logo_splash.png', 'assets'),
+        # Served to endpoints over GET /agent by the collector.
+        ('agent/autosoc_agent.py', 'agent'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],
