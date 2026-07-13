@@ -80,6 +80,33 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._build_metrics_tab()
 
         self.refresh_all()
+        self._auto_refresh_job = None
+        self._schedule_auto_refresh()
+
+    # ── auto refresh ─────────────────────────────────────────────────
+
+    def _schedule_auto_refresh(self):
+        # Re-poll read-only surfaces so enrolled endpoints, new events, and
+        # metrics appear without the operator clicking Refresh. Editable
+        # surfaces (incident detail, entry fields) are deliberately untouched.
+        try:
+            if self.winfo_exists():
+                self._auto_refresh_job = self.after(4000, self._auto_refresh_tick)
+        except Exception:
+            pass
+
+    def _auto_refresh_tick(self):
+        try:
+            if not self.winfo_exists():
+                return
+            self._refresh_collector_panel()
+            self._refresh_agents()   # also refreshes the network/firewall panel
+            self._refresh_triage()
+            self._refresh_incidents()
+            self._refresh_metrics()
+        except Exception:
+            return
+        self._schedule_auto_refresh()
 
     # ── header ───────────────────────────────────────────────────────
 
