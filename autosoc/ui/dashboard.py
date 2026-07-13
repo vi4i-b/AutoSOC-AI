@@ -33,6 +33,7 @@ from autosoc.system.firewall import get_firewall
 from autosoc.system.log_monitor import create_log_listener
 from autosoc.system.netinfo import target_appears_remote
 from autosoc.system.privileges import is_admin, privilege_hint
+from autosoc.system.response import ResponseController
 from autosoc.telegram.client import TelegramBotClient, escape_markdown
 from autosoc.telegram.listener import TelegramUpdateListener, extract_command, extract_contact
 from autosoc.ui import theme
@@ -79,8 +80,10 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         self.analyzer = RiskAnalyzer()
         self.guard = NetworkGuard(self.on_threat_detected)
         self.port_canary = PortCanary(self.on_canary_trip)
+        self.response = ResponseController(self.db, local_firewall=self.firewall)
         self.soc_console = None
         self.collector = None
+        self.syslog = None
         self.last_scan_data = []
         self.scan_summary = ""
         self.ai_loader_job = None
@@ -599,9 +602,14 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
     # ── guard / firewall reactions ───────────────────────────────────
 
     def _block_ip(self, ip, rule_prefix="AutoSOC_Guard_Block"):
-        if self.firewall is None:
-            return False, "", "No supported firewall backend on this platform."
-        return self.firewall.block_ip(ip, rule_prefix=rule_prefix)
+        """Block across every channel (feed + appliance + local firewall).
+
+        Returns (ok, rule_name, message) to match the existing call sites.
+        """
+        ok, summary, _results = self.response.block_ip(
+            ip, reason=rule_prefix, actor=self.current_user.get("username", "autosoc"),
+        )
+        return ok, "", summary
 
     def update_threshold(self, value):
         self.guard.set_threshold(value)
@@ -1508,3 +1516,78 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
                                 self.current_user.get("username", "local_operator"),
                                 "Agent ingestion token regenerated.")
         return token
+
+    # ── syslog ingestion ─────────────────────────────────────────────
+
+    def start_syslog(self):
+        from autosoc.agents.syslog_server import SyslogService
+
+        if self.syslog is None:
+            self.syslog = SyslogService(self.db, on_detection=self.on_bruteforce_detected)
+        ok, message = self.syslog.start()
+        self.db.add_audit_event(
+            "syslog_started" if ok else "syslog_start_failed",
+            self.current_user.get("username", "local_operator"),
+            message,
+        )
+        return ok, message
+
+    def stop_syslog(self):
+        if self.syslog is not None and self.syslog.running:
+            self.syslog.stop()
+            self.db.add_audit_event("syslog_stopped",
+                                    self.current_user.get("username", "local_operator"),
+                                    "Syslog receiver stopped.")
+
+    def syslog_running(self):
+        return bool(self.syslog is not None and self.syslog.running)
+
+    def syslog_bind(self):
+        if self.syslog is not None:
+            return self.syslog.address()
+        from autosoc.agents.syslog_server import DEFAULT_SYSLOG_PORT
+
+        return ("0.0.0.0", int(os.getenv("AUTOSOC_SYSLOG_PORT") or DEFAULT_SYSLOG_PORT))
+
+    def syslog_target(self):
+        _host, port = self.syslog_bind()
+        return f"{self._primary_lan_ip()}:{port}/udp"
+
+    def blocklist_feed_url(self):
+        _host, port = self.collector_bind()
+        return f"http://{self._primary_lan_ip()}:{port}/blocklist.txt"
+
+    # ── firewall appliance integration ───────────────────────────────
+
+    def get_firewall_config(self):
+        return {
+            "type": (self.db.get_setting("firewall_type", "") or "").strip(),
+            "host": self.db.get_setting("firewall_host", "") or "",
+            "token": self.db.get_setting("firewall_token", "") or "",
+            "vdom": self.db.get_setting("firewall_vdom", "root") or "root",
+            "group": self.db.get_setting("firewall_group", "AutoSOC_Blocklist") or "AutoSOC_Blocklist",
+        }
+
+    def save_firewall_config(self, fw_type, host, token, vdom, group):
+        self.db.set_setting("firewall_type", (fw_type or "").strip().lower())
+        self.db.set_setting("firewall_host", (host or "").strip())
+        self.db.set_setting("firewall_token", (token or "").strip())
+        self.db.set_setting("firewall_vdom", (vdom or "root").strip() or "root")
+        self.db.set_setting("firewall_group", (group or "AutoSOC_Blocklist").strip() or "AutoSOC_Blocklist")
+        self.db.add_audit_event(
+            "firewall_integration_saved",
+            self.current_user.get("username", "local_operator"),
+            f"Firewall integration set to '{(fw_type or 'none').lower()}'.",
+        )
+
+    def test_firewall_config(self):
+        from autosoc.system.appliance import connector_from_settings
+
+        return connector_from_settings(self.db).test_connection()
+
+    def block_ip_everywhere(self, ip, reason="manual"):
+        return self.response.block_ip(ip, reason=reason,
+                                      actor=self.current_user.get("username", "autosoc"))
+
+    def unblock_ip_everywhere(self, ip):
+        return self.response.unblock_ip(ip, actor=self.current_user.get("username", "autosoc"))

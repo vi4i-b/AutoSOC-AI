@@ -82,7 +82,20 @@ class _CollectorHandler(BaseHTTPRequestHandler):
         if path in ("/agent", "/install", "/autosoc_agent.py"):
             self._serve_agent_script()
             return
+        if path in ("/blocklist.txt", "/blocklist"):
+            self._serve_blocklist()
+            return
         self._send_json(404, {"ok": False, "error": "not found"})
+
+    def _serve_blocklist(self):
+        """Plain-text IP feed for network firewalls (FortiGate threat feed, Palo Alto EDL, …)."""
+        ips = self.db.active_blocklist()
+        body = ("\n".join(ips) + "\n").encode("utf-8") if ips else b"\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_agent_script(self):
         try:

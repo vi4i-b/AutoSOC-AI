@@ -464,7 +464,7 @@ class SOCConsoleWindow(ctk.CTkToplevel):
     def _build_agents_tab(self):
         tab = self.tab_agents
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(2, weight=1)
+        tab.grid_rowconfigure(3, weight=1)
 
         # ── Collector control panel ─────────────────────────────────
         collector = ctk.CTkFrame(tab, fg_color=theme.BG_PANEL, corner_radius=14)
@@ -512,12 +512,55 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                                           wrap="word")
         self.install_box.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
 
+        # ── Network firewall / syslog panel ─────────────────────────
+        net = ctk.CTkFrame(tab, fg_color=theme.BG_PANEL, corner_radius=14)
+        net.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+        net.grid_columnconfigure(0, weight=1)
+
+        net_head = ctk.CTkFrame(net, fg_color="transparent")
+        net_head.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
+        net_head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(net_head, text="Network Firewall & Syslog", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, sticky="w")
+        self.firewall_status = ctk.CTkLabel(net_head, text="", text_color=theme.TEXT_MUTED,
+                                            font=ctk.CTkFont(size=12, weight="bold"))
+        self.firewall_status.grid(row=0, column=1, sticky="e")
+
+        ctk.CTkLabel(
+            net,
+            text=("For appliances (FortiGate, Palo Alto, MikroTik, pfSense): forward syslog here, and "
+                  "point the device's threat-feed / EDL at the block-list URL. AutoSOC can also push "
+                  "blocks to FortiGate over its API."),
+            text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left", wraplength=900,
+        ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 8))
+
+        net_btns = ctk.CTkFrame(net, fg_color="transparent")
+        net_btns.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.btn_syslog_toggle = ctk.CTkButton(
+            net_btns, text="Start Syslog", width=140, height=32, corner_radius=10,
+            fg_color=theme.ACCENT_GREEN_DARK, hover_color=theme.ACCENT_GREEN_DARK_HOVER,
+            command=self._toggle_syslog)
+        self.btn_syslog_toggle.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(net_btns, text="Firewall Integration", width=170, height=32, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=self._firewall_integration_dialog).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(net_btns, text="Blocklist", width=120, height=32, corner_radius=10,
+                      fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
+                      border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
+                      command=self._blocklist_dialog).pack(side="left")
+
+        self.net_info = ctk.CTkTextbox(net, height=70, fg_color=theme.BG_CONSOLE, corner_radius=10,
+                                       text_color=theme.ACCENT_CYAN, font=ctk.CTkFont(family="Consolas", size=11),
+                                       wrap="word")
+        self.net_info.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
+
         ctk.CTkLabel(tab, text="Enrolled endpoints", text_color=theme.TEXT_MUTED,
-                     font=ctk.CTkFont(size=12, weight="bold")).grid(row=1, column=0, sticky="w", padx=14, pady=(2, 2))
+                     font=ctk.CTkFont(size=12, weight="bold")).grid(row=2, column=0, sticky="w", padx=14, pady=(2, 2))
 
         self.agent_list = self._scroll_frame(tab)
-        self.agent_list.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.agent_list.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
         self._refresh_collector_panel()
+        self._refresh_network_panel()
 
     def _install_command(self):
         url = self.app.collector_lan_url()
@@ -582,7 +625,55 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                     "A new ingestion token is now active. Existing agents must be restarted with the "
                     "new install command to reconnect.")
 
+    # ── network firewall / syslog panel ─────────────────────────────
+
+    def _refresh_network_panel(self):
+        if not hasattr(self, "firewall_status"):
+            return
+        syslog_on = self.app.syslog_running()
+        fw = self.app.get_firewall_config()
+        fw_type = fw["type"] or "feed-only"
+        self.firewall_status.configure(
+            text=f"syslog: {'on' if syslog_on else 'off'} · firewall: {fw_type}",
+            text_color=theme.STATUS_GOOD if (syslog_on or fw['type']) else theme.TEXT_MUTED,
+        )
+        self.btn_syslog_toggle.configure(
+            text="Stop Syslog" if syslog_on else "Start Syslog",
+            fg_color=theme.ACCENT_RED_DARK if syslog_on else theme.ACCENT_GREEN_DARK,
+            hover_color=theme.ACCENT_RED_DARK_HOVER if syslog_on else theme.ACCENT_GREEN_DARK_HOVER,
+        )
+        blocked = len(self.db.active_blocklist())
+        lines = []
+        if syslog_on:
+            lines.append(f"Syslog target (point FortiGate/devices here):  {self.app.syslog_target()}")
+        else:
+            lines.append("Syslog receiver stopped.")
+        lines.append(f"Firewall block-list feed (threat feed / EDL URL):  {self.app.blocklist_feed_url()}")
+        lines.append(f"Currently blocked IPs: {blocked}")
+        self.net_info.configure(state="normal")
+        self.net_info.delete("0.0", "end")
+        self.net_info.insert("end", "\n".join(lines))
+        self.net_info.configure(state="disabled")
+
+    def _toggle_syslog(self):
+        if self.app.syslog_running():
+            self.app.stop_syslog()
+        else:
+            ok, message = self.app.start_syslog()
+            if not ok:
+                _InfoDialog(self, "Syslog", f"Could not start the syslog receiver:\n\n{message}")
+        self._refresh_network_panel()
+
+    def _firewall_integration_dialog(self):
+        _FirewallConfigDialog(self, self.app)
+        self._refresh_network_panel()
+
+    def _blocklist_dialog(self):
+        _BlocklistDialog(self, self.app, self.db)
+        self._refresh_network_panel()
+
     def _refresh_agents(self):
+        self._refresh_network_panel()
         self._clear(self.agent_list)
         self.db.mark_stale_agents()
         agents = self.db.list_agents()
@@ -926,3 +1017,158 @@ class _InfoDialog(ctk.CTkToplevel):
         box.configure(state="disabled")
         ctk.CTkButton(self, text="Close", height=34, fg_color=theme.ACCENT_BLUE,
                       hover_color=theme.ACCENT_BLUE_HOVER, command=self.destroy).pack(pady=(0, 16))
+
+
+class _FirewallConfigDialog(ctk.CTkToplevel):
+    """Configure a network-firewall appliance connector (currently FortiGate)."""
+
+    def __init__(self, master, app):
+        super().__init__(master)
+        self.app = app
+        self.title("Firewall Integration")
+        self.geometry("560x520")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        cfg = app.get_firewall_config()
+
+        ctk.CTkLabel(self, text="Network Firewall Integration", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(
+            self,
+            text=("Vendor-neutral option: leave type = feed-only and point your device's threat feed / EDL "
+                  "at the block-list URL shown in the panel. FortiGate can additionally be pushed via API."),
+            text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left", wraplength=500,
+        ).pack(anchor="w", padx=20, pady=(0, 12))
+
+        form = ctk.CTkFrame(self, fg_color="transparent")
+        form.pack(fill="x", padx=20)
+        form.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(form, text="Type", text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12)).grid(row=0, column=0, sticky="w", pady=6)
+        self.type_menu = ctk.CTkOptionMenu(form, values=["feed-only", "fortigate"], width=180,
+                                           fg_color=theme.BG_CARD, button_color=theme.BTN_NEUTRAL,
+                                           button_hover_color=theme.BTN_NEUTRAL_HOVER)
+        self.type_menu.set(cfg["type"] if cfg["type"] in ("feed-only", "fortigate") else "feed-only")
+        self.type_menu.grid(row=0, column=1, sticky="w", pady=6)
+
+        self.host_entry = self._field(form, 1, "FortiGate host", cfg["host"], placeholder="https://10.0.0.1:443")
+        self.token_entry = self._field(form, 2, "API token", cfg["token"], show="•")
+        self.vdom_entry = self._field(form, 3, "VDOM", cfg["vdom"] or "root")
+        self.group_entry = self._field(form, 4, "Address group", cfg["group"] or "AutoSOC_Blocklist")
+
+        self.result = ctk.CTkLabel(self, text="", text_color=theme.TEXT_MUTED,
+                                   font=ctk.CTkFont(size=11), wraplength=500, justify="left")
+        self.result.pack(anchor="w", padx=20, pady=(10, 0))
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=16)
+        ctk.CTkButton(row, text="Test", width=90, height=34, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self._save_and_test).pack(side="left")
+        ctk.CTkButton(row, text="Close", width=90, height=34, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self.destroy).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(row, text="Save", width=90, height=34, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self._save).pack(side="right")
+
+    def _field(self, form, row, label, value, placeholder="", show=""):
+        ctk.CTkLabel(form, text=label, text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12)).grid(row=row, column=0, sticky="w", pady=6, padx=(0, 8))
+        entry = ctk.CTkEntry(form, height=34, fg_color=theme.BG_FIELD, border_color=theme.FIELD_BORDER,
+                             placeholder_text=placeholder, show=show)
+        if value:
+            entry.insert(0, value)
+        entry.grid(row=row, column=1, sticky="ew", pady=6)
+        return entry
+
+    def _save(self):
+        self.app.save_firewall_config(
+            self.type_menu.get(), self.host_entry.get(), self.token_entry.get(),
+            self.vdom_entry.get(), self.group_entry.get(),
+        )
+        self.result.configure(text="Saved.", text_color=theme.STATUS_GOOD)
+
+    def _save_and_test(self):
+        self._save()
+        self.result.configure(text="Testing…", text_color=theme.STATUS_WARN)
+        self.update_idletasks()
+        ok, message = self.app.test_firewall_config()
+        self.result.configure(text=message, text_color=theme.STATUS_GOOD if ok else theme.STATUS_ERROR)
+
+
+class _BlocklistDialog(ctk.CTkToplevel):
+    """View / add / remove blocked IPs (the feed served to appliances)."""
+
+    def __init__(self, master, app, db):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.title("Firewall Block-list")
+        self.geometry("560x520")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.attributes("-topmost", True)
+        self.transient(master)
+
+        ctk.CTkLabel(self, text="Firewall Block-list", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        ctk.CTkLabel(self, text="These IPs are served at the block-list feed URL and pushed to a "
+                                "configured appliance.", text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=11), wraplength=500, justify="left").pack(anchor="w", padx=20, pady=(0, 10))
+
+        add_row = ctk.CTkFrame(self, fg_color="transparent")
+        add_row.pack(fill="x", padx=20)
+        add_row.grid_columnconfigure(0, weight=1)
+        self.ip_entry = ctk.CTkEntry(add_row, height=34, fg_color=theme.BG_FIELD, border_color=theme.FIELD_BORDER,
+                                     placeholder_text="IP to block, e.g. 203.0.113.10")
+        self.ip_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.ip_entry.bind("<Return>", lambda e: self._add())
+        ctk.CTkButton(add_row, text="Block", width=90, height=34, corner_radius=10,
+                      fg_color=theme.ACCENT_RED_DARK, hover_color=theme.ACCENT_RED_DARK_HOVER,
+                      command=self._add).grid(row=0, column=1)
+
+        self.result = ctk.CTkLabel(self, text="", text_color=theme.TEXT_MUTED,
+                                   font=ctk.CTkFont(size=11), wraplength=500, justify="left")
+        self.result.pack(anchor="w", padx=20, pady=(8, 4))
+
+        self.listing = ctk.CTkScrollableFrame(self, fg_color=theme.BG_CONSOLE, corner_radius=12)
+        self.listing.pack(fill="both", expand=True, padx=20, pady=(0, 16))
+        self.listing.grid_columnconfigure(0, weight=1)
+        self._refresh()
+
+    def _add(self):
+        ip = self.ip_entry.get().strip()
+        if not ip:
+            return
+        ok, summary, _ = self.app.block_ip_everywhere(ip, reason="manual (SOC console)")
+        self.result.configure(text=summary, text_color=theme.STATUS_GOOD if ok else theme.STATUS_ERROR)
+        if ok:
+            self.ip_entry.delete(0, "end")
+        self._refresh()
+
+    def _refresh(self):
+        for child in self.listing.winfo_children():
+            child.destroy()
+        rows = self.db.list_blocked_ips(active_only=True)
+        if not rows:
+            ctk.CTkLabel(self.listing, text="No IPs blocked.", text_color=theme.TEXT_MUTED,
+                         font=ctk.CTkFont(size=12)).grid(row=0, column=0, sticky="w", padx=12, pady=12)
+            return
+        for index, row in enumerate(rows):
+            ip, reason, severity, added_by, created_at = row
+            card = ctk.CTkFrame(self.listing, fg_color=theme.BG_PANEL, corner_radius=10)
+            card.grid(row=index, column=0, sticky="ew", padx=8, pady=4)
+            card.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(card, text=f"{ip}   ({severity})", text_color=theme.TEXT_SOFT,
+                         font=ctk.CTkFont(size=12, weight="bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 0))
+            ctk.CTkLabel(card, text=f"{reason or '—'} · by {added_by or '—'} · {created_at}",
+                         text_color="#85a3bd", font=ctk.CTkFont(size=10), anchor="w").grid(
+                row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+            ctk.CTkButton(card, text="Unblock", width=80, height=28, corner_radius=10,
+                          fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
+                          border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
+                          command=lambda i=ip: self._unblock(i)).grid(row=0, column=1, rowspan=2, padx=10, pady=6)
+
+    def _unblock(self, ip):
+        self.app.unblock_ip_everywhere(ip)
+        self._refresh()

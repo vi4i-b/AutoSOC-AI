@@ -118,6 +118,57 @@ The agent path (2.0) already feeds the `ingested_logs` store and Log Search;
 agentless syslog/webhook listeners writing into the same store are the next
 addition for onboarding devices that can't run an agent.
 
+### 2.1.1 Network firewalls (FortiGate, Palo Alto, MikroTik, pfSense)
+
+Most organizations enforce policy at a network firewall, not on the host. Two
+integrations ship today (**SOC Console → Endpoints & Agents → Network Firewall
+& Syslog**):
+
+**Log collection — syslog.** Click **Start Syslog** (UDP :5514 by default,
+non-privileged). Point the device at the shown target. On FortiGate:
+
+```
+config log syslogd setting
+    set status enable
+    set server <autosoc-ip>
+    set port 5514
+    set mode udp
+end
+```
+
+Messages land in **Log Search**; repeated login failures (sshd *and* FortiGate
+`action=login status=failed srcip=…`) raise a `syslog_bruteforce` security
+event.
+
+**Blocking — two ways:**
+
+1. **Block-list feed (vendor-neutral, recommended).** AutoSOC serves the list
+   of blocked IPs at `http://<autosoc-ip>:8787/blocklist.txt`. Point the device
+   at it once and it auto-drops those IPs:
+   - **FortiGate** — Security Fabric → External Connectors → Threat Feed → IP
+     Address; set the URL and refresh interval, then reference the connector in
+     a deny policy.
+   - **Palo Alto** — External Dynamic List (EDL) of type *IP List* → use in a
+     security rule.
+   - **pfSense** — pfBlockerNG → IPv4 list with the feed URL.
+   - **MikroTik** — scheduled `/tool fetch` + `/ip firewall address-list` import.
+
+   No credentials leave the device; AutoSOC never writes into its config.
+
+2. **Direct FortiGate API push.** In **Firewall Integration**, set type
+   `fortigate`, host, API token, VDOM, and address group. AutoSOC then adds
+   blocked IPs as address objects and appends them to the group in real time.
+   One-time FortiGate setup: create an address group (default
+   `AutoSOC_Blocklist`), reference it in a deny policy, and issue a REST API
+   token (System → Administrators → REST API Admin) with a trusted-host of the
+   AutoSOC server. The API token is stored in the owner-only local DB and
+   redacted from all error messages.
+
+When AutoSOC blocks an IP (guard, canary, brute-force, or manual), the
+`ResponseController` fans the action out to the feed, the configured appliance,
+and the local host firewall together — so it works whether the customer runs
+FortiGate, a Linux box, or both.
+
 ### 2.2 The AutoSOC agent (deeper visibility)
 
 For endpoints where you want richer, host-level telemetry and the ability to

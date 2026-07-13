@@ -266,6 +266,20 @@ class SOCDatabase:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS blocklist (
+                    ip TEXT PRIMARY KEY,
+                    reason TEXT DEFAULT '',
+                    severity TEXT DEFAULT 'High',
+                    added_by TEXT DEFAULT '',
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+                """
+            )
+
             try:
                 cursor.execute(
                     """
@@ -1005,3 +1019,59 @@ class SOCDatabase:
             if flipped:
                 self.conn.commit()
             return flipped
+
+    # ── blocklist (firewall threat feed) ─────────────────────────────
+
+    def add_blocked_ip(self, ip, reason="", severity="High", added_by=""):
+        """Add or re-activate an IP on the block list (feed served to appliances)."""
+        ip = (ip or "").strip()
+        if not ip:
+            return False
+        with self._lock:
+            now = self._now()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO blocklist (ip, reason, severity, added_by, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT(ip) DO UPDATE SET
+                    reason = excluded.reason,
+                    severity = excluded.severity,
+                    added_by = excluded.added_by,
+                    active = 1,
+                    updated_at = excluded.updated_at
+                """,
+                (ip, reason, severity, added_by, now, now),
+            )
+            self.conn.commit()
+            return True
+
+    def remove_blocked_ip(self, ip):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE blocklist SET active = 0, updated_at = ? WHERE ip = ?",
+                (self._now(), (ip or "").strip()),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def list_blocked_ips(self, active_only=True):
+        with self._lock:
+            cursor = self.conn.cursor()
+            if active_only:
+                cursor.execute(
+                    "SELECT ip, reason, severity, added_by, created_at FROM blocklist WHERE active = 1 ORDER BY rowid DESC"
+                )
+            else:
+                cursor.execute(
+                    "SELECT ip, reason, severity, added_by, created_at FROM blocklist ORDER BY rowid DESC"
+                )
+            return cursor.fetchall()
+
+    def active_blocklist(self):
+        """Just the IP strings currently blocked — used to render the feed."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT ip FROM blocklist WHERE active = 1 ORDER BY ip")
+            return [row["ip"] for row in cursor.fetchall()]

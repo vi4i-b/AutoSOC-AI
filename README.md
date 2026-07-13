@@ -76,9 +76,26 @@ console — visible under **Details** and **Log Search**. The agent is pure
 Python stdlib (no install needed) and authenticates with a revocable bearer
 token.
 
+### Network firewalls & syslog (FortiGate, Palo Alto, MikroTik, pfSense)
+
+For devices that can't run the agent, use **SOC Console → Endpoints & Agents →
+Network Firewall & Syslog**:
+
+- **Start Syslog** (UDP :5514) and point the device's syslog at the shown
+  target — logs flow into Log Search, and repeated login failures (incl.
+  FortiGate `action=login status=failed`) raise brute-force events.
+- **Block-list feed** — AutoSOC serves blocked IPs at `/blocklist.txt`; point a
+  FortiGate Threat Feed / Palo Alto EDL / pfBlockerNG / MikroTik at it to
+  auto-drop them.
+- **Firewall Integration** — configure a FortiGate REST connector to push
+  blocks in real time.
+
+Every block (guard, canary, brute-force, manual) is fanned out to the feed, the
+configured appliance, and the local host firewall together.
+
 See [docs/AGENTS_AND_ROADMAP.md](docs/AGENTS_AND_ROADMAP.md) for the full agent
-architecture (systemd service, mTLS/pull-action hardening) and the
-product/monetization roadmap. The agent script lives at
+architecture (systemd service, mTLS/pull-action hardening), the FortiGate
+setup, and the product/monetization roadmap. The agent script lives at
 [agent/autosoc_agent.py](agent/autosoc_agent.py).
 
 ## Project structure
@@ -99,8 +116,9 @@ autosoc/
 ├── security_utils.py    # PBKDF2 password hashing
 ├── validators.py        # input validation
 ├── ai/                  # AI providers (nvidia.py, expert.py)
-├── agents/              # endpoint collector
-│   └── server.py        #   HTTP collector (enroll/report, serves the agent)
+├── agents/              # log/telemetry ingestion
+│   ├── server.py        #   HTTP collector (enroll/report, agent + blocklist feed)
+│   └── syslog_server.py #   agentless syslog receiver (FortiGate/devices)
 ├── phishing/            # anti-phishing engine
 │   ├── analyzer.py      #   orchestrator → PhishingReport
 │   ├── url_features.py  #   URL heuristics (offline)
@@ -111,6 +129,8 @@ autosoc/
 ├── system/              # OS integration
 │   ├── commands.py      #   safe subprocess execution (no shell)
 │   ├── firewall.py      #   netsh / iptables backends
+│   ├── appliance.py     #   FortiGate REST + feed-only connector
+│   ├── response.py      #   unified block (feed + appliance + host)
 │   ├── hardening.py     #   service-level hardening per OS
 │   ├── log_monitor.py   #   failed-login monitoring per OS
 │   ├── netinfo.py       #   local IPs, remote-target detection
