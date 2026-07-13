@@ -76,6 +76,9 @@ class _CollectorHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
+        if path in ("/", "/index.html"):
+            self._serve_landing()
+            return
         if path == "/api/v1/ping":
             self._send_json(200, {"ok": True, "service": "autosoc-collector"})
             return
@@ -93,6 +96,43 @@ class _CollectorHandler(BaseHTTPRequestHandler):
         body = ("\n".join(ips) + "\n").encode("utf-8") if ips else b"\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_landing(self):
+        """Human-friendly page so a browser hitting the root isn't confused."""
+        host = self.headers.get("Host", "this-host:8787")
+        page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoSOC Collector</title>
+<style>
+ body{{background:#07111b;color:#dbe8f4;font-family:system-ui,Segoe UI,Arial,sans-serif;
+      margin:0;padding:48px;line-height:1.5}}
+ .card{{max-width:720px;margin:0 auto;background:#0b1623;border:1px solid #1d3347;
+        border-radius:16px;padding:28px 32px}}
+ h1{{margin:0 0 4px;font-size:24px}} .muted{{color:#87a5c0}}
+ code,pre{{background:#08111b;border:1px solid #1f3449;border-radius:8px;color:#77beff}}
+ code{{padding:2px 6px}} pre{{padding:14px;overflow:auto}}
+ a{{color:#77beff}} .ok{{color:#5dd39e}} table{{border-collapse:collapse;margin:12px 0}}
+ td{{padding:6px 14px 6px 0;vertical-align:top}}
+</style></head><body><div class="card">
+<h1>AutoSOC Collector <span class="ok">● online</span></h1>
+<p class="muted">Endpoint log &amp; telemetry ingestion service. This is an API, not a website.</p>
+<table>
+<tr><td><a href="/api/v1/ping">/api/v1/ping</a></td><td class="muted">health check</td></tr>
+<tr><td><a href="/agent">/agent</a></td><td class="muted">the endpoint agent script</td></tr>
+<tr><td><a href="/blocklist.txt">/blocklist.txt</a></td><td class="muted">firewall block-list feed (FortiGate Threat Feed / Palo Alto EDL)</td></tr>
+</table>
+<p class="muted">Onboard a server (run on the target, needs your ingestion token):</p>
+<pre>curl -fsSL http://{host}/agent | sudo python3 - \\
+  --server http://{host} --token &lt;ingestion-token&gt;</pre>
+<p class="muted">Get the token from the AutoSOC app: SOC Console &rarr; Endpoints &amp; Agents.</p>
+</div></body></html>"""
+        body = page.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
