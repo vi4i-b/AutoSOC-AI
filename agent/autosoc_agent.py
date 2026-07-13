@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -37,6 +38,9 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+
+_IPV4_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b")
+_SS_PROC_RE = re.compile(r'\("([^"]+)",pid=(\d+)')
 
 DEFAULT_INTERVAL = 30
 DEFAULT_LOG_FILES = ["/var/log/auth.log", "/var/log/secure", "/var/log/syslog"]
@@ -208,18 +212,161 @@ def logged_in_users():
     return [line.split()[0] for line in out.strip().splitlines() if line.split()]
 
 
+def os_pretty_name():
+    try:
+        with open("/etc/os-release", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return platform.platform()
+
+
+def resources():
+    """CPU/memory/disk/load — quick health context for the analyst."""
+    data = {"cpu_count": os.cpu_count()}
+    try:
+        with open("/proc/loadavg", "r", encoding="utf-8") as handle:
+            data["load_avg"] = handle.read().split()[:3]
+    except OSError:
+        pass
+    try:
+        mem = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                key = line.split(":", 1)[0]
+                mem[key] = int(line.split()[1])
+        total = mem.get("MemTotal", 0) // 1024
+        avail = mem.get("MemAvailable", 0) // 1024
+        if total:
+            data["mem_total_mb"] = total
+            data["mem_used_mb"] = total - avail
+    except (OSError, ValueError, IndexError):
+        pass
+    out = _run(["df", "-Pm", "/"])
+    if out:
+        rows = out.strip().splitlines()
+        if len(rows) >= 2:
+            cols = rows[1].split()
+            if len(cols) >= 5:
+                data["disk_root"] = {"size_mb": cols[1], "used_mb": cols[2], "use_pct": cols[4]}
+    return data
+
+
+def network_sockets(limit=200):
+    """Listening ports and active connections, each with the owning process.
+
+    This is the core "what process opens what" view — a listener on an odd
+    port or a connection to an unknown remote is how backdoors and C2 show up.
+    """
+    if os.name == "nt":
+        return _windows_sockets(limit)
+
+    out = _run(["ss", "-tunap"])
+    listening, connections = [], []
+    if not out:
+        return {"listening": listening, "connections": connections, "note": "ss unavailable"}
+
+    for line in out.splitlines():
+        if not line.strip() or line.startswith("Netid"):
+            continue
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        netid, state, local, peer = parts[0], parts[1], parts[4], parts[5]
+        proc, pid = "", ""
+        match = _SS_PROC_RE.search(line)
+        if match:
+            proc, pid = match.group(1), match.group(2)
+        if state in ("LISTEN", "UNCONN"):
+            listening.append({"proto": netid, "local": local, "pid": pid, "process": proc})
+        elif state == "ESTAB":
+            connections.append({"proto": netid, "local": local, "remote": peer,
+                                "state": state, "pid": pid, "process": proc})
+        if len(listening) + len(connections) >= limit:
+            break
+    return {"listening": listening, "connections": connections}
+
+
+def _windows_sockets(limit):
+    listening, connections = [], []
+    names = {}
+    tasks = _run(["tasklist", "/fo", "csv", "/nh"])
+    if tasks:
+        import csv
+        import io
+
+        for row in csv.reader(io.StringIO(tasks)):
+            if len(row) >= 2:
+                names[row[1].strip()] = row[0]
+    out = _run(["netstat", "-ano"])
+    if not out:
+        return {"listening": listening, "connections": connections}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[0] not in ("TCP", "UDP"):
+            continue
+        proto, local = parts[0], parts[1]
+        if proto == "TCP" and len(parts) >= 5:
+            state, pid = parts[3], parts[4]
+            remote = parts[2]
+        else:
+            state, pid, remote = "", parts[-1], parts[2] if len(parts) > 2 else "*:*"
+        proc = names.get(pid, "")
+        if state == "LISTENING" or proto == "UDP":
+            listening.append({"proto": proto.lower(), "local": local, "pid": pid, "process": proc})
+        elif state == "ESTABLISHED":
+            connections.append({"proto": proto.lower(), "local": local, "remote": remote,
+                                "state": state, "pid": pid, "process": proc})
+        if len(listening) + len(connections) >= limit:
+            break
+    return {"listening": listening, "connections": connections}
+
+
+def recent_auth_failures(limit_lines=3000):
+    """Quick count + top source IPs of failed logins from the local auth log."""
+    result = {"count": 0, "top_sources": []}
+    for path in ("/var/log/auth.log", "/var/log/secure"):
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                lines = handle.readlines()[-limit_lines:]
+        except (OSError, PermissionError):
+            continue
+        counts = {}
+        total = 0
+        for line in lines:
+            if ("Failed password" in line or "authentication failure" in line
+                    or "Invalid user" in line):
+                total += 1
+                found = _IPV4_RE.search(line)
+                if found:
+                    counts[found.group(0)] = counts.get(found.group(0), 0) + 1
+        top = sorted(counts.items(), key=lambda item: -item[1])[:8]
+        result = {"count": total, "top_sources": [{"ip": ip, "count": c} for ip, c in top]}
+        break
+    return result
+
+
 def collect_telemetry():
     return {
         "hostname": socket.gethostname(),
         "fqdn": socket.getfqdn(),
         "system": platform.system(),
         "platform": platform.platform(),
+        "os_pretty": os_pretty_name(),
+        "kernel": platform.release(),
         "release": platform.release(),
         "python": platform.python_version(),
         "primary_ip": primary_ip(),
         "ipv4": all_ipv4(),
         "uptime_seconds": uptime_seconds(),
         "logged_in_users": logged_in_users(),
+        "resources": resources(),
+        "network": network_sockets(),
+        "security": recent_auth_failures(),
         "processes": collect_processes(),
         "collected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }

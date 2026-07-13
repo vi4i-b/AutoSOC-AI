@@ -167,9 +167,25 @@ class AgentModuleTests(unittest.TestCase):
 
     def test_collect_telemetry_shape(self):
         telemetry = self.agent.collect_telemetry()
-        for key in ("hostname", "system", "primary_ip", "ipv4", "processes"):
+        for key in ("hostname", "system", "primary_ip", "ipv4", "processes",
+                    "network", "resources", "security", "os_pretty", "kernel"):
             self.assertIn(key, telemetry)
         self.assertIn("count", telemetry["processes"])
+        self.assertIn("listening", telemetry["network"])
+        self.assertIn("connections", telemetry["network"])
+
+    def test_network_sockets_shape(self):
+        net = self.agent.network_sockets()
+        self.assertIsInstance(net["listening"], list)
+        self.assertIsInstance(net["connections"], list)
+        for item in net["listening"]:
+            self.assertIn("local", item)
+            self.assertIn("process", item)
+
+    def test_recent_auth_failures_shape(self):
+        result = self.agent.recent_auth_failures()
+        self.assertIn("count", result)
+        self.assertIsInstance(result["top_sources"], list)
 
 
 if __name__ == "__main__":

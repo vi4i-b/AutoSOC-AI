@@ -756,31 +756,7 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         except (json.JSONDecodeError, TypeError):
             _InfoDialog(self, "Endpoint", "Telemetry could not be parsed.")
             return
-
-        lines = [
-            f"Host: {data.get('hostname', '?')}  ({data.get('fqdn', '')})",
-            f"OS: {data.get('platform', '?')}",
-            f"Python: {data.get('python', '?')}",
-            f"Primary IP: {data.get('primary_ip', '?')}",
-            f"All IPv4: {', '.join(data.get('ipv4', [])) or '—'}",
-        ]
-        uptime = data.get("uptime_seconds")
-        if uptime:
-            lines.append(f"Uptime: {uptime // 3600}h {(uptime % 3600) // 60}m")
-        users = data.get("logged_in_users") or []
-        if users:
-            lines.append(f"Logged-in users: {', '.join(users)}")
-        lines.append(f"Snapshot updated: {snapshot['updated_at']}")
-
-        procs = data.get("processes", {})
-        lines.append("")
-        lines.append(f"Processes: {procs.get('count', 0)} total. Top by CPU:")
-        lines.append(f"  {'PID':<8}{'CPU%':<8}{'MEM%':<8}NAME")
-        for proc in procs.get("top", [])[:15]:
-            lines.append(f"  {str(proc.get('pid','')):<8}{str(proc.get('cpu','')):<8}"
-                         f"{str(proc.get('mem','')):<8}{proc.get('name','')}")
-
-        _InfoDialog(self, f"Endpoint · {hostname or agent_id}", "\n".join(lines))
+        _EndpointDetailsWindow(self, hostname or agent_id, data, snapshot["updated_at"])
 
     def _remove_agent(self, agent_id):
         self.db.delete_agent(agent_id)
@@ -1199,3 +1175,152 @@ class _BlocklistDialog(ctk.CTkToplevel):
     def _unblock(self, ip):
         self.app.unblock_ip_everywhere(ip)
         self._refresh()
+
+
+class _EndpointDetailsWindow(ctk.CTkToplevel):
+    """Large, tabbed endpoint view: system, network (process↔port), processes, security."""
+
+    def __init__(self, master, title, data, updated_at):
+        super().__init__(master)
+        self.data = data or {}
+        self.updated_at = updated_at
+        self.title(f"Endpoint · {title}")
+        self.geometry("1040x720")
+        self.minsize(820, 560)
+        self.resizable(True, True)
+        self.configure(fg_color=theme.BG_DEEP)
+        self.attributes("-topmost", True)
+        self.transient(master)
+        apply_window_icon(self)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=18, pady=(16, 6))
+        ctk.CTkLabel(header, text=f"Endpoint · {title}", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
+        net = self.data.get("network", {}) or {}
+        chip = (f"{len(net.get('listening', []))} listening · "
+                f"{len(net.get('connections', []))} connections · "
+                f"{(self.data.get('processes', {}) or {}).get('count', 0)} procs")
+        ctk.CTkLabel(header, text=chip, text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(side="right")
+
+        tabview = ctk.CTkTabview(
+            self, fg_color=theme.BG_SIDEBAR,
+            segmented_button_selected_color=theme.ACCENT_BLUE,
+            segmented_button_selected_hover_color=theme.ACCENT_BLUE_HOVER,
+        )
+        tabview.pack(fill="both", expand=True, padx=18, pady=(0, 6))
+
+        self._text_tab(tabview, "System", self._system_text())
+        self._text_tab(tabview, "Network", self._network_text())
+        self._text_tab(tabview, "Processes", self._processes_text())
+        self._text_tab(tabview, "Security", self._security_text())
+
+        ctk.CTkButton(self, text="Close", height=34, width=120, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self.destroy).pack(pady=(0, 14))
+
+    def _text_tab(self, tabview, name, content):
+        tab = tabview.add(name)
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
+        box = ctk.CTkTextbox(tab, fg_color=theme.BG_CONSOLE, corner_radius=12, text_color=theme.TEXT_SOFT,
+                             font=ctk.CTkFont(family="Consolas", size=12), wrap="none")
+        box.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        box.insert("end", content)
+        box.configure(state="disabled")
+
+    # ── section renderers ────────────────────────────────────────────
+
+    def _system_text(self):
+        d = self.data
+        res = d.get("resources", {}) or {}
+        lines = [
+            f"Host:            {d.get('hostname', '?')}  ({d.get('fqdn', '')})",
+            f"OS:              {d.get('os_pretty', d.get('platform', '?'))}",
+            f"Kernel:          {d.get('kernel', d.get('release', '?'))}",
+            f"Agent Python:    {d.get('python', '?')}",
+        ]
+        uptime = d.get("uptime_seconds")
+        if uptime:
+            lines.append(f"Uptime:          {uptime // 86400}d {(uptime % 86400) // 3600}h {(uptime % 3600) // 60}m")
+        if res.get("cpu_count") is not None:
+            load = res.get("load_avg")
+            load_txt = f"   load avg: {', '.join(load)}" if load else ""
+            lines.append(f"CPU cores:       {res.get('cpu_count')}{load_txt}")
+        if res.get("mem_total_mb"):
+            lines.append(f"Memory:          {res.get('mem_used_mb', '?')} / {res.get('mem_total_mb')} MB used")
+        disk = res.get("disk_root")
+        if disk:
+            lines.append(f"Disk /:          {disk.get('used_mb')} / {disk.get('size_mb')} MB ({disk.get('use_pct')})")
+        lines.append("")
+        lines.append(f"Primary IP:      {d.get('primary_ip', '?')}")
+        lines.append(f"All IPv4:        {', '.join(d.get('ipv4', [])) or '—'}")
+        users = d.get("logged_in_users") or []
+        lines.append(f"Logged-in users: {', '.join(users) or '—'}")
+        lines.append("")
+        lines.append(f"Snapshot updated: {self.updated_at}")
+        lines.append(f"Collected at:     {d.get('collected_at', '—')}")
+        return "\n".join(lines)
+
+    def _network_text(self):
+        net = self.data.get("network", {}) or {}
+        listening = net.get("listening", [])
+        connections = net.get("connections", [])
+        lines = []
+
+        lines.append(f"LISTENING PORTS ({len(listening)}) — what each process exposes")
+        lines.append(f"{'PROTO':<6}{'LOCAL ADDRESS':<26}{'PID':<8}PROCESS")
+        lines.append("-" * 60)
+        if listening:
+            for item in listening:
+                lines.append(f"{item.get('proto',''):<6}{item.get('local',''):<26}"
+                             f"{str(item.get('pid','')):<8}{item.get('process','')}")
+        else:
+            lines.append("(none reported — run the agent with sudo to see all sockets)")
+
+        lines.append("")
+        lines.append(f"ACTIVE CONNECTIONS ({len(connections)}) — where each process is talking")
+        lines.append(f"{'PROTO':<6}{'LOCAL':<24}{'REMOTE':<24}{'PID':<8}PROCESS")
+        lines.append("-" * 78)
+        if connections:
+            for item in connections:
+                lines.append(f"{item.get('proto',''):<6}{item.get('local',''):<24}"
+                             f"{item.get('remote',''):<24}{str(item.get('pid','')):<8}{item.get('process','')}")
+        else:
+            lines.append("(no established connections reported)")
+
+        if net.get("note"):
+            lines.append("")
+            lines.append(f"note: {net['note']}")
+        return "\n".join(lines)
+
+    def _processes_text(self):
+        procs = self.data.get("processes", {}) or {}
+        top = procs.get("top", [])
+        lines = [f"Running processes: {procs.get('count', 0)} total. Top by CPU:", ""]
+        lines.append(f"{'PID':<8}{'CPU%':<8}{'MEM%':<8}NAME")
+        lines.append("-" * 50)
+        for proc in top:
+            lines.append(f"{str(proc.get('pid','')):<8}{str(proc.get('cpu','')):<8}"
+                         f"{str(proc.get('mem','')):<8}{proc.get('name','')}")
+        if not top:
+            lines.append("(no process data)")
+        return "\n".join(lines)
+
+    def _security_text(self):
+        sec = self.data.get("security", {}) or {}
+        lines = ["Login security (from the endpoint's auth log)", ""]
+        lines.append(f"Recent failed logins: {sec.get('count', 0)}")
+        top = sec.get("top_sources", [])
+        if top:
+            lines.append("")
+            lines.append("Top source IPs:")
+            lines.append(f"  {'IP':<20}FAILURES")
+            for item in top:
+                lines.append(f"  {item.get('ip',''):<20}{item.get('count','')}")
+        else:
+            lines.append("No failed-login sources recorded (or the auth log was not readable).")
+        lines.append("")
+        lines.append("Full log lines from this endpoint are searchable in the Log Search tab.")
+        lines.append("Tip: run the agent with sudo so it can read /var/log/auth.log and all sockets.")
+        return "\n".join(lines)
