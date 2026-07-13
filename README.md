@@ -62,11 +62,15 @@ Click **Open SOC Console** in the left sidebar. Tabs:
 
 ### Detection rules (SIEM-style)
 
-The **Detection Rules** tab ships a default baseline of ~21 rules — the kind
-of content most SIEMs enable out of the box — mapped to MITRE ATT&CK:
-SSH/FortiGate brute-force, root login, new user / added-to-sudo, sudo failures,
-reverse shell & `curl|sh`, web-shell indicators, security-service-stopped and
-log-cleared (defense evasion), plus telemetry rules — **connection to a
+The **Detection Rules** tab ships a default baseline of ~35 rules — the kind
+of content most SIEMs enable out of the box — mapped to MITRE ATT&CK across the
+kill chain: brute-force & valid-account logins (Credential Access / Initial
+Access), new user / added-to-sudo / authorized_keys / systemd persistence,
+host & network enumeration (Discovery), reverse shell, `curl|sh`, encoded
+commands, web-shell, credential dumping (mimikatz/LSASS/shadow), remote-exec
+tools (PsExec/WMI — Lateral Movement), data exfiltration, security-service /
+SELinux / audit disabled and log-cleared (Defense Evasion), and destructive /
+ransomware indicators (Impact) — plus telemetry rules: **connection to a
 block-listed / IOC IP** (auto-block), **listener on a backdoor port**,
 **connection to a C2-style port**, and **offensive/miner process running**.
 

