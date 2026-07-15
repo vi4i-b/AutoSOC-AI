@@ -271,6 +271,10 @@ machine. **Only scan hosts and networks you own or are authorized to test.**
 
 ## Additional documents
 
+- [docs/ru/USER_GUIDE.md](docs/ru/USER_GUIDE.md) — full usage guide (Russian)
+- [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md) — secure auth / access-control options
+- [docs/PITCH.md](docs/PITCH.md) — product strategy, investor pitch & go-to-market
+- [docs/AGENTS_AND_ROADMAP.md](docs/AGENTS_AND_ROADMAP.md) — agent architecture & monetization roadmap
 - [docs/CODE_NAVIGATION.md](docs/CODE_NAVIGATION.md)
 - [docs/ru/README.md](docs/ru/README.md)
 - [docs/HACKATHON_PRESENTATION.md](docs/HACKATHON_PRESENTATION.md)
