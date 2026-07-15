@@ -336,6 +336,20 @@ class SOCDatabase:
             except sqlite3.Error:
                 pass
 
+            # Indexes for the hot paths the SOC console polls frequently, so
+            # queries stay fast as event/log volume grows (Linux and Windows).
+            for index_sql in (
+                "CREATE INDEX IF NOT EXISTS idx_security_events_id ON security_events(id DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_ingested_logs_id ON ingested_logs(id DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_agent_commands_agent ON agent_commands(agent_id, status)",
+                "CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status)",
+                "CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts(username, attempted_at)",
+            ):
+                try:
+                    cursor.execute(index_sql)
+                except sqlite3.Error:
+                    pass
+
             self.conn.commit()
 
     # ── users ────────────────────────────────────────────────────────

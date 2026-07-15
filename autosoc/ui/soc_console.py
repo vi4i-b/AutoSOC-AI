@@ -49,6 +49,9 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self.current_user = current_user or {}
         self.actor = self.current_user.get("username", "analyst")
         self.selected_incident_id = None
+        # Cache of the last-rendered data signature per list, so the auto-refresh
+        # tick can skip the expensive widget rebuild when nothing changed.
+        self._sig = {}
 
         self.title("AutoSOC — SOC Operations Console")
         self.geometry("1180x780")
@@ -93,22 +96,43 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         # surfaces (incident detail, entry fields) are deliberately untouched.
         try:
             if self.winfo_exists():
-                self._auto_refresh_job = self.after(4000, self._auto_refresh_tick)
+                self._auto_refresh_job = self.after(6000, self._auto_refresh_tick)
         except Exception:
             pass
 
+    def _visible_tab(self):
+        try:
+            return self.tabview.get()
+        except Exception:
+            return ""
+
     def _auto_refresh_tick(self):
+        # Only refresh the tab the analyst is actually looking at, and skip the
+        # widget rebuild when the underlying data has not changed — this is what
+        # keeps the console responsive instead of rebuilding every list on a timer.
         try:
             if not self.winfo_exists():
                 return
-            self._refresh_collector_panel()
-            self._refresh_agents()   # also refreshes the network/firewall panel
-            self._refresh_triage()
-            self._refresh_incidents()
-            self._refresh_metrics()
+            tab = self._visible_tab()
+            if tab == "Endpoints & Agents":
+                self._refresh_collector_panel()
+                self._refresh_agents(auto=True)
+            elif tab == "Triage Queue":
+                self._refresh_triage(auto=True)
+            elif tab == "Incidents":
+                self._refresh_incidents(auto=True)
+            elif tab == "Metrics":
+                self._refresh_metrics()
         except Exception:
             return
         self._schedule_auto_refresh()
+
+    def _unchanged(self, name, signature):
+        """True when the list's data signature matches the last render."""
+        if self._sig.get(name) == signature:
+            return True
+        self._sig[name] = signature
+        return False
 
     # ── header ───────────────────────────────────────────────────────
 
@@ -205,10 +229,13 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self.triage_list = self._scroll_frame(tab)
         self.triage_list.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
-    def _refresh_triage(self):
-        self._clear(self.triage_list)
+    def _refresh_triage(self, auto=False):
         wanted = self.triage_filter.get() if hasattr(self, "triage_filter") else "All"
-        events = self.db.get_recent_security_events(200)
+        events = self.db.get_recent_security_events(80)
+        signature = (wanted, tuple((r[0], r[1], r[2]) for r in events))
+        if auto and self._unchanged("triage", signature):
+            return
+        self._clear(self.triage_list)
         shown = 0
         for row in events:
             created_at, event_type, severity, source, details = row[0], row[1], row[2], row[3], row[4]
@@ -320,10 +347,13 @@ class SOCConsoleWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(size=13),
         ).grid(row=0, column=0, padx=20, pady=20)
 
-    def _refresh_incidents(self):
-        self._clear(self.incident_list)
+    def _refresh_incidents(self, auto=False):
         status = self.incident_filter.get() if hasattr(self, "incident_filter") else "All"
         incidents = self.db.list_incidents(status=status)
+        signature = (status, tuple((r[0], r[2], r[3], r[9]) for r in incidents))
+        if auto and self._unchanged("incidents", signature):
+            return
+        self._clear(self.incident_list)
         if not incidents:
             ctk.CTkLabel(self.incident_list, text="No incidents yet. Promote an event or create one.",
                          text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=12)).grid(
@@ -702,11 +732,14 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         _BlocklistDialog(self, self.app, self.db)
         self._refresh_network_panel()
 
-    def _refresh_agents(self):
+    def _refresh_agents(self, auto=False):
         self._refresh_network_panel()
-        self._clear(self.agent_list)
         self.db.mark_stale_agents()
         agents = self.db.list_agents()
+        signature = tuple((a["agent_id"], a["status"], a["last_seen"], a["isolated"]) for a in agents)
+        if auto and self._unchanged("agents", signature):
+            return
+        self._clear(self.agent_list)
         if not agents:
             ctk.CTkLabel(
                 self.agent_list,
