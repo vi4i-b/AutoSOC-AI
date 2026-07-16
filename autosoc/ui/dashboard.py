@@ -26,6 +26,7 @@ from autosoc.detection import RuleEngine
 from autosoc.env import load_env_file
 from autosoc.guard import NetworkGuard
 from autosoc.logging_setup import get_logger
+from autosoc.permissions import has_permission, normalize_role
 from autosoc.phishing import PhishingAnalyzer
 from autosoc.ports import DEFAULT_RISKY_PORTS, TRACKED_PORTS
 from autosoc.scanner import NetworkScanner, count_open_ports, summarize_single_port_state
@@ -67,6 +68,10 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
 
         self.db = SOCDatabase()
         self.current_user = current_user or {}
+        self.user_role = normalize_role(self.current_user.get("role"))
+        # Bootstrap: until an admin account exists, everyone has full rights
+        # (never lock out a fresh or upgraded single-user install).
+        self._bootstrap = self.db.count_admins() == 0
         self.firewall = get_firewall()
         self.port_definitions = dict(TRACKED_PORTS)
         self.switches = {}
@@ -160,6 +165,22 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
             return socket.gethostbyname(socket.gethostname())
         except OSError:
             return "127.0.0.1"
+
+    # ── access control ───────────────────────────────────────────────
+
+    def can(self, action):
+        return has_permission(self.user_role, action, bootstrap=self._bootstrap)
+
+    def require(self, action):
+        """Return True if allowed; otherwise show a denial and return False."""
+        if self.can(action):
+            return True
+        messagebox.showwarning(
+            "Not permitted",
+            f"Your role ('{self.user_role}') is not allowed to '{action}'. "
+            "Ask an administrator for the required role.",
+        )
+        return False
 
     def _warn_if_not_admin(self):
         if is_admin():
@@ -1225,6 +1246,8 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         self.btn_show_key.configure(text="Show" if showing else "Hide")
 
     def save_nvidia_key(self):
+        if not self.require("admin"):
+            return
         key = self.nvidia_key_entry.get().strip()
         model = self.nvidia_model_entry.get().strip()
         self.nvidia_ai.configure(api_key=key, model=model or None)

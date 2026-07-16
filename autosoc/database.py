@@ -322,6 +322,20 @@ class SOCDatabase:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS invites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code_hash TEXT UNIQUE NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'analyst',
+                    used INTEGER NOT NULL DEFAULT 0,
+                    expires_at REAL,
+                    created_by TEXT DEFAULT '',
+                    created_at TEXT
+                )
+                """
+            )
+
             # Network-isolation flag for endpoints (set from command results).
             self._ensure_column(cursor, "agents", "isolated", "INTEGER NOT NULL DEFAULT 0")
 
@@ -1298,5 +1312,94 @@ class SOCDatabase:
                 FROM agent_commands WHERE agent_id = ? ORDER BY id DESC LIMIT ?
                 """,
                 (agent_id, int(limit)),
+            )
+            return cursor.fetchall()
+
+    # ── users administration (RBAC) ──────────────────────────────────
+
+    def count_users(self):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users")
+            return cursor.fetchone()[0]
+
+    def count_admins(self):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users WHERE LOWER(role) = 'admin'")
+            return cursor.fetchone()[0]
+
+    def list_users(self):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT username, role, telegram_chat_id, created_at FROM users ORDER BY username"
+            )
+            return cursor.fetchall()
+
+    def set_user_role(self, username, role):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE users SET role = ?, updated_at = ? WHERE username = ?",
+                (role, self._now(), (username or "").strip()),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_user(self, username):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM users WHERE username = ?", ((username or "").strip(),))
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    # ── invite codes ─────────────────────────────────────────────────
+
+    def _hash_invite(self, code):
+        import hashlib
+
+        return hashlib.sha256((code or "").encode("utf-8")).hexdigest()
+
+    def create_invite(self, role="analyst", ttl_hours=72, created_by=""):
+        """Create a single-use invite and return the plaintext code (stored hashed)."""
+        code = "inv-" + secrets.token_urlsafe(9)
+        expires_at = time.time() + max(int(ttl_hours), 1) * 3600
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO invites (code_hash, role, used, expires_at, created_by, created_at)
+                VALUES (?, ?, 0, ?, ?, ?)
+                """,
+                (self._hash_invite(code), role, expires_at, created_by, self._now()),
+            )
+            self.conn.commit()
+        return code
+
+    def consume_invite(self, code):
+        """Validate and burn an invite; returns its role or None."""
+        code_hash = self._hash_invite(code)
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT id, role, used, expires_at FROM invites WHERE code_hash = ?",
+                (code_hash,),
+            )
+            row = cursor.fetchone()
+            if not row or row["used"]:
+                return None
+            if row["expires_at"] and row["expires_at"] < time.time():
+                return None
+            cursor.execute("UPDATE invites SET used = 1 WHERE id = ?", (row["id"],))
+            self.conn.commit()
+            return row["role"]
+
+    def list_invites(self, limit=50):
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT role, used, expires_at, created_by, created_at FROM invites ORDER BY id DESC LIMIT ?",
+                (int(limit),),
             )
             return cursor.fetchall()

@@ -99,6 +99,56 @@ def register_user(
     )
 
 
+def registration_mode() -> str:
+    """open | invite | closed (default open, set via AUTOSOC_REGISTRATION_MODE)."""
+    mode = (os.getenv("AUTOSOC_REGISTRATION_MODE") or "open").strip().lower()
+    return mode if mode in ("open", "invite", "closed") else "open"
+
+
+def register_account(
+    username: str,
+    password: str,
+    telegram_chat_id: str = "",
+    invite_code: str = "",
+) -> tuple[bool, str]:
+    """Register honouring the deployment policy. Returns (ok, message).
+
+    - The very first account always becomes ``admin`` (bootstrap).
+    - Otherwise the mode decides: ``open`` allows self-signup as ``analyst``;
+      ``invite`` requires a valid invite code (which carries the role);
+      ``closed`` refuses all self-registration.
+    """
+    def _register(db):
+        first_user = db.count_users() == 0
+        if first_user:
+            role = "admin"
+        else:
+            mode = registration_mode()
+            if mode == "closed":
+                return False, "Registration is closed. Ask an administrator for an account."
+            if mode == "invite" or invite_code:
+                role = db.consume_invite(invite_code) if invite_code else None
+                if not role:
+                    return False, "A valid invite code is required to register."
+            else:
+                role = "analyst"
+
+        ok = db.register_user(
+            username, password, role=role,
+            telegram_chat_id=telegram_chat_id,
+        )
+        if not ok:
+            return False, "This username or Telegram Chat ID is already in use."
+        note = " as the first administrator" if first_user else f" with role '{role}'"
+        return True, f"Account created{note}."
+
+    return _with_db(_register)
+
+
+def create_invite(role: str, ttl_hours: int = 72, created_by: str = "") -> str:
+    return _with_db(lambda db: db.create_invite(role=role, ttl_hours=ttl_hours, created_by=created_by))
+
+
 def update_user_telegram(username: str, telegram_chat_id: str, telegram_user_id: str = "") -> bool:
     return _with_db(lambda db: db.update_user_telegram(username, telegram_chat_id, telegram_user_id))
 

@@ -174,6 +174,26 @@ class SOCConsoleWindow(ctk.CTkToplevel):
             command=self.refresh_all,
         ).pack(side="right", padx=(0, 12))
 
+        if self.app.can("admin"):
+            ctk.CTkButton(
+                header,
+                text="Admin",
+                width=90,
+                height=32,
+                corner_radius=12,
+                fg_color="#243a2f",
+                hover_color="#2c4a3a",
+                border_width=1,
+                border_color="#2f6f52",
+                text_color="#9ce0bd",
+                command=self._admin_dialog,
+            ).pack(side="right", padx=(0, 12))
+
+    def _admin_dialog(self):
+        if not self.app.require("admin"):
+            return
+        _AdminDialog(self, self.app, self.db)
+
     def refresh_all(self):
         self._refresh_triage()
         self._refresh_incidents()
@@ -725,6 +745,8 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._refresh_network_panel()
 
     def _firewall_integration_dialog(self):
+        if not self.app.require("admin"):
+            return
         _FirewallConfigDialog(self, self.app)
         self._refresh_network_panel()
 
@@ -802,6 +824,8 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                       command=lambda: self._remove_agent(agent_id)).pack(side="left")
 
     def _isolate_endpoint(self, agent_id, hostname):
+        if not self.app.require("respond"):
+            return
         dialog = _ConfirmDialog(
             self, "Isolate Endpoint",
             f"Cut {hostname or agent_id} off the network?\n\n"
@@ -818,6 +842,8 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._refresh_agents()
 
     def _release_endpoint(self, agent_id, hostname):
+        if not self.app.require("respond"):
+            return
         command_id = self.app.release_endpoint(agent_id)
         _InfoDialog(self, "Release Queued",
                     f"Release command #{command_id} queued for {hostname or agent_id}. "
@@ -922,6 +948,9 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                           command=lambda: self._delete_rule(rule["rule_key"])).pack()
 
     def _toggle_rule(self, rule_key, switch):
+        if not self.app.require("add_rule"):
+            switch.select() if not switch.get() else switch.deselect()  # revert visual
+            return
         self.db.set_rule_enabled(rule_key, bool(switch.get()))
         self.db.add_audit_event("rule_toggled", self.actor,
                                 f"Rule {rule_key} {'enabled' if switch.get() else 'disabled'}.")
@@ -929,12 +958,16 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._refresh_rules()
 
     def _delete_rule(self, rule_key):
+        if not self.app.require("manage_rules"):
+            return
         self.db.delete_rule(rule_key)
         self.db.add_audit_event("rule_deleted", self.actor, f"Custom rule {rule_key} deleted.")
         self.app.reload_rules()
         self._refresh_rules()
 
     def _add_rule_dialog(self):
+        if not self.app.require("add_rule"):
+            return
         _AddRuleDialog(self, self.app, self.db, on_saved=self._on_rule_saved)
 
     def _on_rule_saved(self):
@@ -1752,3 +1785,103 @@ class _EndpointPortScanWindow(ctk.CTkToplevel):
         if not connections:
             lines.append("  (none)")
         return "\n".join(lines)
+
+
+class _AdminDialog(ctk.CTkToplevel):
+    """Admin-only: create invite codes and manage user roles."""
+
+    ROLES = ["viewer", "analyst", "responder", "admin"]
+
+    def __init__(self, master, app, db):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.title("Administration")
+        self.geometry("640x620")
+        self.configure(fg_color=theme.BG_DEEP)
+        self.attributes("-topmost", True)
+        self.transient(master)
+        apply_window_icon(self)
+
+        ctk.CTkLabel(self, text="Administration", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", padx=20, pady=(16, 2))
+        from autosoc.auth import registration_mode
+        ctk.CTkLabel(self, text=f"Registration mode: {registration_mode()} "
+                              "(set AUTOSOC_REGISTRATION_MODE=invite to restrict sign-up).",
+                     text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w", padx=20)
+
+        # ── Invite creation ─────────────────────────────────────────
+        inv = ctk.CTkFrame(self, fg_color=theme.BG_PANEL, corner_radius=12)
+        inv.pack(fill="x", padx=20, pady=(12, 8))
+        ctk.CTkLabel(inv, text="Create invite code", text_color=theme.TEXT_SOFT,
+                     font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=14, pady=(12, 6))
+        row = ctk.CTkFrame(inv, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(0, 10))
+        ctk.CTkLabel(row, text="Role:", text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 6))
+        self.invite_role = ctk.CTkOptionMenu(row, values=self.ROLES, width=140, fg_color=theme.BG_CARD,
+                                             button_color=theme.BTN_NEUTRAL, button_hover_color=theme.BTN_NEUTRAL_HOVER)
+        self.invite_role.set("analyst")
+        self.invite_role.pack(side="left", padx=(0, 10))
+        ctk.CTkButton(row, text="Generate Invite", width=150, height=32, corner_radius=10,
+                      fg_color=theme.ACCENT_BLUE, hover_color=theme.ACCENT_BLUE_HOVER,
+                      command=self._create_invite).pack(side="left")
+        self.invite_result = ctk.CTkTextbox(inv, height=44, fg_color=theme.BG_CONSOLE, corner_radius=8,
+                                            text_color=theme.ACCENT_CYAN, font=ctk.CTkFont(family="Consolas", size=12))
+        self.invite_result.pack(fill="x", padx=14, pady=(0, 12))
+        self.invite_result.insert("end", "Generated invite codes appear here (shown once).")
+        self.invite_result.configure(state="disabled")
+
+        # ── Users list ──────────────────────────────────────────────
+        ctk.CTkLabel(self, text="Users & roles", text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=22, pady=(6, 2))
+        self.users_list = ctk.CTkScrollableFrame(self, fg_color=theme.BG_CONSOLE, corner_radius=12)
+        self.users_list.pack(fill="both", expand=True, padx=20, pady=(0, 12))
+        self.users_list.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkButton(self, text="Close", height=34, width=120, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self.destroy).pack(pady=(0, 14))
+        self._refresh_users()
+
+    def _create_invite(self):
+        code = self.db.create_invite(role=self.invite_role.get(), ttl_hours=72, created_by=self.app.current_user.get("username", "admin"))
+        self.db.add_audit_event("invite_created", self.app.current_user.get("username", "admin"),
+                                f"Invite for role {self.invite_role.get()} created.")
+        self.invite_result.configure(state="normal")
+        self.invite_result.delete("0.0", "end")
+        self.invite_result.insert("end", f"{code}\n(role: {self.invite_role.get()}, valid 72h, single-use — copy it now)")
+        self.invite_result.configure(state="disabled")
+
+    def _refresh_users(self):
+        for child in self.users_list.winfo_children():
+            child.destroy()
+        for index, row in enumerate(self.db.list_users()):
+            username, role, _chat, created_at = row
+            card = ctk.CTkFrame(self.users_list, fg_color=theme.BG_PANEL, corner_radius=10)
+            card.grid(row=index, column=0, sticky="ew", padx=8, pady=4)
+            card.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(card, text=f"{username}", text_color=theme.TEXT_SOFT,
+                         font=ctk.CTkFont(size=13, weight="bold"), anchor="w").grid(
+                row=0, column=0, sticky="ew", padx=12, pady=(8, 0))
+            ctk.CTkLabel(card, text=f"created {created_at}", text_color="#85a3bd",
+                         font=ctk.CTkFont(size=10), anchor="w").grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 8))
+            menu = ctk.CTkOptionMenu(card, values=self.ROLES, width=130, fg_color=theme.BG_CARD,
+                                     button_color=theme.BTN_NEUTRAL, button_hover_color=theme.BTN_NEUTRAL_HOVER,
+                                     command=lambda value, u=username: self._set_role(u, value))
+            from autosoc.permissions import normalize_role
+            menu.set(normalize_role(role))
+            menu.grid(row=0, column=1, rowspan=2, padx=12, pady=8)
+
+    def _set_role(self, username, role):
+        # Never allow removing the last admin.
+        from autosoc.permissions import normalize_role
+        if normalize_role(role) != "admin" and self.db.count_admins() <= 1:
+            current = [u for u in self.db.list_users() if u[0] == username and normalize_role(u[1]) == "admin"]
+            if current:
+                _InfoDialog(self, "Admin", "Cannot demote the last remaining administrator.")
+                self._refresh_users()
+                return
+        self.db.set_user_role(username, role)
+        self.db.add_audit_event("role_changed", self.app.current_user.get("username", "admin"),
+                                f"{username} role set to {role}.")
+        self._refresh_users()

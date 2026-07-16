@@ -16,6 +16,8 @@ from autosoc.auth import (
     get_latest_telegram_chat_id,
     init_db,
     is_telegram_chat_id_available,
+    register_account,
+    registration_mode,
     load_remember,
     register_user,
     save_latest_telegram_user,
@@ -435,6 +437,24 @@ class LoginWindow(ctk.CTk):
         if latest_chat_id:
             self.telegram_entry.insert(0, latest_chat_id)
 
+        # Invite code — shown only when the deployment restricts registration.
+        self.invite_entry = None
+        if registration_mode() != "open":
+            ctk.CTkLabel(form, text="Invite code",
+                         font=ctk.CTkFont("Helvetica", 11),
+                         text_color=theme.TEXT_MUTED, anchor="w").pack(fill="x", pady=(0, 4))
+            self.invite_entry = ctk.CTkEntry(
+                form, height=44,
+                placeholder_text="inv-… (from an administrator)",
+                fg_color=theme.BG_FIELD,
+                border_color=theme.FIELD_BORDER, border_width=1,
+                corner_radius=10,
+                font=ctk.CTkFont("Consolas", 13),
+                text_color=theme.TEXT_PRIMARY,
+                placeholder_text_color=theme.TEXT_MUTED,
+            )
+            self.invite_entry.pack(fill="x", pady=(0, 8))
+
         tg_row = ctk.CTkFrame(form, fg_color="transparent")
         tg_row.pack(fill="x", pady=(0, 12))
         ctk.CTkLabel(
@@ -565,17 +585,15 @@ class LoginWindow(ctk.CTk):
         if not is_telegram_chat_id_available(telegram_chat_id):
             self.error_label.configure(text="⚠️ Bu Telegram Chat ID artıq başqa hesab üçün istifadə olunub.")
             return
-        if register_user(username, password, telegram_chat_id=telegram_chat_id):
-            self.error_label.configure(
-                text="✅ Qeydiyyat uğurlu! Daxil olun.",
-                text_color="#2ecc71"
-            )
-            messagebox.showinfo("AutoSOC", f"'{username}' istifadəçisi yaradıldı!\nTelegram Chat ID linked: {telegram_chat_id}")
+
+        invite_code = self.invite_entry.get().strip() if self.invite_entry else ""
+        ok, message = register_account(username, password,
+                                       telegram_chat_id=telegram_chat_id, invite_code=invite_code)
+        if ok:
+            self.error_label.configure(text=f"✅ {message} Daxil olun.", text_color="#2ecc71")
+            messagebox.showinfo("AutoSOC", f"'{username}': {message}")
         else:
-            self.error_label.configure(
-                text="❌ Bu istifadəçi artıq mövcuddur!",
-                text_color="#ff5555"
-            )
+            self.error_label.configure(text=f"❌ {message}", text_color="#ff5555")
 
 
 def launch(on_success):
