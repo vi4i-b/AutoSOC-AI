@@ -171,7 +171,30 @@ agent/autosoc_agent.py   # standalone endpoint agent (stdlib only)
 tests/                   # unit tests
 ```
 
-## Installation
+## Install from a packaged build
+
+Prebuilt installers are attached to each [GitHub Release](../../releases)
+(produced automatically by CI for both platforms — copy
+`packaging/ci-release.yml` into `.github/workflows/` to enable it):
+
+- **Ubuntu/Debian:** download `autosoc_<version>_amd64.deb`, then
+  `sudo apt install ./autosoc_<version>_amd64.deb`. Launch from the menu or run
+  `autosoc` (`autosoc --root` for firewall/isolation features).
+- **Windows:** download `AutoSOC_Setup.exe` and run it (installs
+  `AutoSOC.exe`, requests admin for firewall control).
+
+Build them yourself:
+
+```bash
+# Linux .deb (needs the venv from below + pyinstaller)
+pip install pyinstaller pyinstaller-hooks-contrib
+./packaging/build_deb.sh 3.0.0        # → dist/autosoc_3.0.0_amd64.deb
+
+# Windows .exe + installer
+scripts\build_windows.bat            # → dist\AutoSOC.exe, installer\AutoSOC_Setup.exe
+```
+
+## Installation (from source)
 
 ### Ubuntu / Linux
 

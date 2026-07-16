@@ -1,0 +1,81 @@
+name: Build & Release
+
+# Push a tag like v3.0.0 to build installers for both platforms and publish
+# them as downloadable assets on a GitHub Release.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk nmap libpcap0.8
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
+      - name: Run tests
+        run: python -m unittest discover -s tests
+      - name: Build .deb
+        run: |
+          python -m PyInstaller --clean --noconfirm main.spec
+          # build_deb.sh expects a venv; point it at the system python instead
+          sed 's#\${ROOT}/.venv/bin/pyinstaller#python -m PyInstaller#' packaging/build_deb.sh > /tmp/build_deb.sh
+          bash /tmp/build_deb.sh "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autosoc-deb
+          path: dist/*.deb
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
+      - name: Run tests
+        run: python -m unittest discover -s tests
+      - name: Build .exe
+        run: python -m PyInstaller --clean --noconfirm main.spec
+      - name: Build installer (Inno Setup)
+        run: |
+          choco install innosetup -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\AutoSOC_Setup.iss
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autosoc-windows
+          path: |
+            dist/AutoSOC.exe
+            installer/AutoSOC_Setup.exe
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.deb
+            artifacts/**/*.exe
+          generate_release_notes: true

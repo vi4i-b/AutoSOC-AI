@@ -5,30 +5,36 @@
 import os
 import sys
 
+from PyInstaller.utils.hooks import collect_data_files
+
 binaries = []
-hiddenimports = []
+hiddenimports = ["PIL._tkinter_finder"]
 
 if sys.platform == "win32":
-    hiddenimports = ["win32evtlog", "win32evtlogutil", "pywintypes"]
+    hiddenimports += ["win32evtlog", "win32evtlogutil", "pywintypes"]
     npcap_dir = r"C:\Windows\System32\Npcap"
     for dll_name in ("wpcap.dll", "Packet.dll"):
         dll_path = os.path.join(npcap_dir, dll_name)
         if os.path.exists(dll_path):
             binaries.append((dll_path, "."))
 
+# CustomTkinter ships its themes/assets as data files that must be bundled.
+datas = [
+    ('assets/app_icon.png', 'assets'),
+    ('assets/app_icon.ico', 'assets'),
+    ('assets/autosoc_logo.png', 'assets'),
+    ('assets/autosoc_logo_login.png', 'assets'),
+    ('assets/autosoc_logo_splash.png', 'assets'),
+    # Served to endpoints over GET /agent by the collector.
+    ('agent/autosoc_agent.py', 'agent'),
+]
+datas += collect_data_files('customtkinter')
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=binaries,
-    datas=[
-        ('assets/app_icon.png', 'assets'),
-        ('assets/app_icon.ico', 'assets'),
-        ('assets/autosoc_logo.png', 'assets'),
-        ('assets/autosoc_logo_login.png', 'assets'),
-        ('assets/autosoc_logo_splash.png', 'assets'),
-        # Served to endpoints over GET /agent by the collector.
-        ('agent/autosoc_agent.py', 'agent'),
-    ],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
