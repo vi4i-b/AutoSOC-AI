@@ -297,6 +297,9 @@ machine. **Only scan hosts and networks you own or are authorized to test.**
 - [docs/ru/USER_GUIDE.md](docs/ru/USER_GUIDE.md) — full usage guide (Russian)
 - [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md) — secure auth / access-control options
 - [docs/PITCH.md](docs/PITCH.md) — product strategy, investor pitch & go-to-market
+- [docs/presentation/index.html](docs/presentation/index.html) — animated investor deck (open in a browser)
+- [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md) — demo video script
+- [docs/TESTING.md](docs/TESTING.md) — testing guide (automated + manual + E2E)
 - [docs/AGENTS_AND_ROADMAP.md](docs/AGENTS_AND_ROADMAP.md) — agent architecture & monetization roadmap
 - [docs/CODE_NAVIGATION.md](docs/CODE_NAVIGATION.md)
 - [docs/ru/README.md](docs/ru/README.md)

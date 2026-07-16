@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoSOC — Investor Deck</title>
+<style>
+  :root{
+    --bg:#07111b; --bg2:#0b1623; --card:#101c2b; --panel:#0d1b2a;
+    --blue:#2b7fff; --cyan:#77beff; --green:#5dd39e; --yellow:#ffd36b;
+    --red:#ff6b7a; --text:#f4f8fc; --muted:#87a5c0; --border:#1d3347;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Segoe UI",system-ui,-apple-system,Arial,sans-serif;
+    overflow:hidden;
+  }
+  /* animated aurora background */
+  body::before{
+    content:""; position:fixed; inset:-30%;
+    background:
+      radial-gradient(40% 40% at 20% 20%, rgba(43,127,255,.20), transparent 60%),
+      radial-gradient(45% 45% at 80% 30%, rgba(93,211,158,.14), transparent 60%),
+      radial-gradient(40% 40% at 60% 85%, rgba(119,190,255,.14), transparent 60%);
+    filter:blur(20px); animation:drift 18s ease-in-out infinite alternate; z-index:0;
+  }
+  @keyframes drift{from{transform:translate(-4%, -3%) scale(1)}to{transform:translate(4%,3%) scale(1.1)}}
+
+  .stage{position:relative; height:100vh; width:100vw; z-index:1}
+  .slide{
+    position:absolute; inset:0; display:none;
+    padding:6vh 8vw; flex-direction:column; justify-content:center;
+  }
+  .slide.active{display:flex; animation:slidein .6s cubic-bezier(.2,.7,.2,1) both}
+  @keyframes slidein{from{opacity:0; transform:translateY(24px)}to{opacity:1; transform:none}}
+
+  .kicker{color:var(--cyan); letter-spacing:.28em; text-transform:uppercase;
+    font-size:.8rem; font-weight:700; margin-bottom:14px}
+  h1{font-size:clamp(2.4rem,6vw,5rem); line-height:1.02; letter-spacing:-.02em}
+  h2{font-size:clamp(1.8rem,4vw,3rem); line-height:1.06; margin-bottom:8px}
+  .lead{color:var(--muted); font-size:clamp(1rem,1.7vw,1.5rem); margin-top:14px; max-width:60ch}
+  .accent{color:var(--blue)} .g{color:var(--green)} .y{color:var(--yellow)} .c{color:var(--cyan)}
+
+  .badge{display:inline-block; background:#0f2033; border:1px solid var(--border);
+    color:var(--cyan); border-radius:999px; padding:6px 14px; font-size:.85rem; margin-bottom:22px}
+
+  .grid{display:grid; gap:18px; margin-top:26px}
+  .g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:18px;
+    padding:22px 24px; opacity:0; transform:translateY(16px); animation:pop .5s forwards}
+  .card h3{font-size:1.15rem; margin-bottom:6px}
+  .card p{color:var(--muted); font-size:.98rem; line-height:1.5}
+  .card .ico{font-size:1.6rem; margin-bottom:10px}
+  @keyframes pop{to{opacity:1; transform:none}}
+  .active .card:nth-child(1){animation-delay:.15s}
+  .active .card:nth-child(2){animation-delay:.28s}
+  .active .card:nth-child(3){animation-delay:.41s}
+  .active .card:nth-child(4){animation-delay:.54s}
+  .active .card:nth-child(5){animation-delay:.67s}
+  .active .card:nth-child(6){animation-delay:.80s}
+
+  table{border-collapse:collapse; margin-top:24px; width:100%; font-size:clamp(.85rem,1.3vw,1.05rem)}
+  th,td{padding:12px 16px; text-align:left; border-bottom:1px solid var(--border)}
+  th{color:var(--muted); font-weight:600}
+  td.win{color:var(--green); font-weight:700}
+  tr td:first-child{color:var(--text); font-weight:600}
+  .col-auto{background:linear-gradient(180deg, rgba(43,127,255,.12), transparent); border-radius:12px}
+
+  .stat{display:flex; gap:40px; margin-top:30px; flex-wrap:wrap}
+  .stat .n{font-size:clamp(2.2rem,4vw,3.4rem); font-weight:800; color:var(--blue)}
+  .stat .l{color:var(--muted)}
+
+  .demo{margin-top:26px; display:flex; gap:16px; align-items:center; flex-wrap:wrap}
+  .step{background:var(--panel); border:1px solid var(--border); border-radius:14px;
+    padding:16px 20px; min-width:150px; opacity:0; animation:pop .5s forwards}
+  .active .step:nth-child(1){animation-delay:.2s}
+  .active .step:nth-child(3){animation-delay:.5s}
+  .active .step:nth-child(5){animation-delay:.8s}
+  .active .step:nth-child(7){animation-delay:1.1s}
+  .arrow{color:var(--blue); font-size:1.6rem; opacity:0; animation:pop .4s forwards}
+  .active .arrow:nth-of-type(1){animation-delay:.35s}
+  .active .arrow:nth-of-type(2){animation-delay:.65s}
+  .active .arrow:nth-of-type(3){animation-delay:.95s}
+  .step .t{font-size:.8rem; color:var(--muted)} .step .v{font-size:1.1rem; font-weight:700; margin-top:4px}
+  .pulse{color:var(--red); animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .price{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:26px}
+  .tier{background:var(--card); border:1px solid var(--border); border-radius:18px; padding:22px}
+  .tier.h{border-color:var(--blue); box-shadow:0 0 0 1px var(--blue) inset}
+  .tier .p{font-size:1.5rem; font-weight:800; color:var(--cyan); margin:8px 0}
+  .tier ul{list-style:none; color:var(--muted); font-size:.9rem; line-height:1.8; margin-top:6px}
+
+  .logo{display:flex; align-items:center; gap:6px; font-weight:800; font-size:clamp(2.6rem,7vw,5.4rem)}
+  .shield{width:.9em;height:.9em; animation:float 3s ease-in-out infinite}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+
+  /* chrome */
+  .bar{position:fixed; top:0; left:0; height:4px; background:var(--blue); z-index:5; transition:width .4s}
+  .dots{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); display:flex; gap:10px; z-index:5}
+  .dot{width:9px;height:9px;border-radius:50%;background:#24384d;cursor:pointer;transition:.2s}
+  .dot.on{background:var(--blue); transform:scale(1.3)}
+  .nav{position:fixed; bottom:18px; right:24px; color:var(--muted); font-size:.85rem; z-index:5}
+  .brand{position:fixed; top:18px; left:26px; color:var(--muted); font-weight:700; letter-spacing:.1em; z-index:5}
+  .brand b{color:var(--text)} .brand span{color:var(--cyan)}
+</style>
+</head>
+<body>
+<div class="bar" id="bar"></div>
+<div class="brand"><b>Auto</b><span>SOC</span></div>
+<div class="stage" id="stage">
+
+  <!-- 1 TITLE -->
+  <section class="slide">
+    <div class="logo"><span class="shield">🛡️</span>Auto<span class="c">SOC</span></div>
+    <p class="lead" style="font-size:clamp(1.2rem,2.4vw,2rem); color:var(--text); margin-top:20px">
+      The <span class="accent">AI-native SOC-in-a-box</span>.<br>
+      Detect, explain and <span class="g">respond</span> to threats across your servers,
+      endpoints and firewalls — from one console.</p>
+    <p class="lead">Set up in an afternoon, not a quarter. Investor & product overview.</p>
+  </section>
+
+  <!-- 2 PROBLEM -->
+  <section class="slide">
+    <div class="kicker">The Problem</div>
+    <h2>Most companies can't afford — or run — a SOC.</h2>
+    <div class="grid g3">
+      <div class="card"><div class="ico">🕳️</div><h3>No visibility</h3><p>SMBs & data centers run dozens of servers with no central place to see attacks.</p></div>
+      <div class="card"><div class="ico">🧠</div><h3>No experts</h3><p>SIEMs are log warehouses that need a trained analyst — a salary most can't justify.</p></div>
+      <div class="card"><div class="ico">🐢</div><h3>Too slow</h3><p>Enterprise tools take weeks to deploy and months to tune. Attacks don't wait.</p></div>
+    </div>
+    <p class="lead">Result: breaches happen — and nobody even notices.</p>
+  </section>
+
+  <!-- 3 SOLUTION -->
+  <section class="slide">
+    <div class="kicker">The Solution</div>
+    <h2>AutoSOC — security operations that guide <span class="accent">you</span>.</h2>
+    <div class="grid g3">
+      <div class="card"><div class="ico">🔍</div><h3>Detect</h3><p>Network scan + ~35 MITRE-mapped rules on live logs & endpoint telemetry.</p></div>
+      <div class="card"><div class="ico">💬</div><h3>Explain</h3><p>AI copilot describes each finding in plain language — AZ / RU / EN.</p></div>
+      <div class="card"><div class="ico">⚡</div><h3>Respond</h3><p>One click: isolate an endpoint, block an IP on host + FortiGate + feed.</p></div>
+    </div>
+    <p class="lead">One product. No SOC team required.</p>
+  </section>
+
+  <!-- 4 DEMO -->
+  <section class="slide">
+    <div class="kicker">90-Second Live Demo</div>
+    <h2>From alert to containment — in front of the room.</h2>
+    <div class="demo">
+      <div class="step"><div class="t">1 · Detect</div><div class="v">🔴 Reverse shell</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">2 · Explain</div><div class="v c">AI: “C2 on :4444”</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">3 · Decide</div><div class="v y">Incident opened</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">4 · Respond</div><div class="v pulse">🔒 ISOLATED</div></div>
+    </div>
+    <p class="lead">A real server gets cut off the network live — that's the moment that sells.</p>
+  </section>
+
+  <!-- 5 DIFFERENTIATION -->
+  <section class="slide">
+    <div class="kicker">Why We Win</div>
+    <h2>Not another SIEM. Not just a scanner.</h2>
+    <table>
+      <tr><th></th><th>nmap</th><th>SIEM (Splunk…)</th><th class="col-auto">AutoSOC</th></tr>
+      <tr><td>Setup</td><td>seconds</td><td>weeks–months</td><td class="win col-auto">minutes</td></tr>
+      <tr><td>Needs experts</td><td>yes</td><td>yes (the cost)</td><td class="win col-auto">no — AI explains</td></tr>
+      <tr><td>Detection rules</td><td>—</td><td>you write them</td><td class="win col-auto">~35 by default + custom</td></tr>
+      <tr><td>Response / isolate</td><td>—</td><td>limited</td><td class="win col-auto">one click</td></tr>
+      <tr><td>Endpoint agent</td><td>—</td><td>separate product</td><td class="win col-auto">built-in, 1 command</td></tr>
+      <tr><td>Languages</td><td>EN</td><td>EN</td><td class="win col-auto">AZ / RU / EN</td></tr>
+    </table>
+  </section>
+
+  <!-- 6 FEATURES -->
+  <section class="slide">
+    <div class="kicker">The Product</div>
+    <h2>Everything a small SOC needs, in one window.</h2>
+    <div class="grid g3">
+      <div class="card"><div class="ico">🖥️</div><h3>Endpoint agents</h3><p>One-command install. Logs, processes, connections, IPs.</p></div>
+      <div class="card"><div class="ico">📜</div><h3>Detection engine</h3><p>MITRE ATT&CK rules; add/remove your own.</p></div>
+      <div class="card"><div class="ico">🎣</div><h3>Anti-phishing</h3><p>URL + TLS + content + spelling + AI verdict.</p></div>
+      <div class="card"><div class="ico">🧯</div><h3>Response</h3><p>Isolate endpoint, block IP across host & FortiGate.</p></div>
+      <div class="card"><div class="ico">🧭</div><h3>SOC console</h3><p>Triage, cases, threat intel, log search, metrics.</p></div>
+      <div class="card"><div class="ico">🔐</div><h3>Access control</h3><p>Roles + invite-only + OS/PAM login.</p></div>
+    </div>
+  </section>
+
+  <!-- 7 MARKET -->
+  <section class="slide">
+    <div class="kicker">Who Pays</div>
+    <h2>Underserved by English-only enterprise suites.</h2>
+    <div class="grid g3">
+      <div class="card"><div class="ico">🏢</div><h3>SMBs</h3><p>No security team — AutoSOC watches and alerts to Telegram.</p></div>
+      <div class="card"><div class="ico">🖧</div><h3>MSSPs & data centers</h3><p>Many servers/tenants; central collection + one-click isolation.</p></div>
+      <div class="card"><div class="ico">📋</div><h3>Compliance buyers</h3><p>ISO / PCI / GDPR audit trail — an existing budget line.</p></div>
+    </div>
+    <div class="stat">
+      <div><div class="n">1 deal</div><div class="l">= hundreds of endpoints via MSSP</div></div>
+      <div><div class="n">AZ·RU·EN</div><div class="l">regional moat</div></div>
+      <div><div class="n">minutes</div><div class="l">time-to-value</div></div>
+    </div>
+  </section>
+
+  <!-- 8 BUSINESS -->
+  <section class="slide">
+    <div class="kicker">Business Model</div>
+    <h2>Land free, expand per endpoint.</h2>
+    <div class="price">
+      <div class="tier"><h3>Community</h3><div class="p">Free</div><ul><li>Scanning</li><li>Anti-phishing</li><li>Dashboard</li></ul></div>
+      <div class="tier h"><h3>Pro</h3><div class="p">€3–6 / endpoint</div><ul><li>Agents + logs</li><li>Detection & response</li><li>Alerting</li></ul></div>
+      <div class="tier"><h3>MSSP / DC</h3><div class="p">€200–1000 / tenant</div><ul><li>Multi-tenant</li><li>Branded reports</li><li>SLA + API</li></ul></div>
+      <div class="tier"><h3>Add-ons</h3><div class="p">Compliance · AI</div><ul><li>ISO/PCI/GDPR packs</li><li>Managed AI copilot</li><li>Threat-intel feeds</li></ul></div>
+    </div>
+    <p class="lead">No mandatory subscriptions to start — sell paid on marketplaces, grow into tiers.</p>
+  </section>
+
+  <!-- 9 ROADMAP -->
+  <section class="slide">
+    <div class="kicker">Traction & Roadmap</div>
+    <h2>Wedge is built. Next: the enterprise unlock.</h2>
+    <div class="grid g2">
+      <div class="card"><div class="ico">✅</div><h3>Shipped</h3><p>Console, agents, detection engine, anti-phishing, isolation, RBAC, packaged installers, 145 tests green.</p></div>
+      <div class="card"><div class="ico">🚀</div><h3>Next</h3><p>Multi-tenancy → MSSP channel; compliance reports; AI incident copilot; SSO/SOC 2 for enterprise.</p></div>
+    </div>
+    <p class="lead">Each step turns a great demo into a signed data-center contract.</p>
+  </section>
+
+  <!-- 10 ASK -->
+  <section class="slide">
+    <div class="kicker">The Ask</div>
+    <h1>Let's build the SOC for<br>everyone <span class="accent">without</span> one.</h1>
+    <p class="lead" style="font-size:1.4rem; color:var(--text); margin-top:24px">
+      AI-native · multilingual · all-in-one · fast · affordable.</p>
+    <p class="lead">Seeking partners & pilots to reach the first 10 paying customers.
+      <span class="c">security@autosoc.local</span></p>
+  </section>
+
+</div>
+
+<div class="dots" id="dots"></div>
+<div class="nav">← → to navigate</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const bar = document.getElementById('bar');
+  const dots = document.getElementById('dots');
+  let i = 0;
+  slides.forEach((_, n) => {
+    const d = document.createElement('div'); d.className = 'dot';
+    d.onclick = () => go(n); dots.appendChild(d);
+  });
+  function go(n){
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, n2) => s.classList.toggle('active', n2 === i));
+    Array.from(dots.children).forEach((d, n2) => d.classList.toggle('on', n2 === i));
+    bar.style.width = ((i + 1) / slides.length * 100) + '%';
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') go(i + 1);
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') go(i - 1);
+    if (e.key === 'Home') go(0); if (e.key === 'End') go(slides.length - 1);
+  });
+  document.getElementById('stage').addEventListener('click', e => {
+    if (e.clientX > window.innerWidth * 0.5) go(i + 1); else go(i - 1);
+  });
+  go(0);
+</script>
+</body>
+</html>
