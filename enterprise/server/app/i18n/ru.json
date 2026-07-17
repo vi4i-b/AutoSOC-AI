@@ -1,0 +1,18 @@
+{
+  "agent.suspected_compromise": "⚠️ Подозрение на компрометацию агента: {hostname} перестал слать heartbeat без команды выключения.",
+  "agent.isolated": "🔒 Хост {hostname} изолирован от сети.",
+  "agent.rollback": "↩️ Изоляция {hostname} отменена.",
+  "incident.critical": "🚨 Критический инцидент на {hostname} — {technique} ({tactic}).",
+  "incident.aggregated": "🚨 {count} похожих алертов на {hostname} за последние {window}с — {technique}.",
+  "soar.fortigate_blocked": "🛡️ FortiGate: источник {ip} заблокирован.",
+  "soar.fortigate_failed": "❌ Действие FortiGate не удалось после {attempts} попыток: {error}.",
+  "auth.super_admin_granted": "Доступ супер-администратора выдан через OS bootstrap.",
+  "node.status.active": "Активен",
+  "node.status.under_attack": "Под атакой",
+  "node.status.isolated": "Изолирован",
+  "node.status.offline": "Офлайн",
+  "action.isolate": "Изолировать",
+  "action.process_tree": "Дерево процессов",
+  "action.ask_ai": "Спросить ИИ",
+  "action.rollback": "Откатить"
+}

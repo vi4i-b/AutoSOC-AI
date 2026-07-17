@@ -1,0 +1,18 @@
+{
+  "agent.suspected_compromise": "⚠️ Agentin kompromitasiya şübhəsi: {hostname} söndürmə əmri olmadan heartbeat göndərməyi dayandırdı.",
+  "agent.isolated": "🔒 {hostname} host şəbəkədən təcrid edildi.",
+  "agent.rollback": "↩️ {hostname} təcridi geri qaytarıldı.",
+  "incident.critical": "🚨 {hostname} üzərində kritik insident — {technique} ({tactic}).",
+  "incident.aggregated": "🚨 Son {window}s ərzində {hostname} üzərində {count} oxşar bildiriş — {technique}.",
+  "soar.fortigate_blocked": "🛡️ FortiGate: {ip} mənbəyi bloklandı.",
+  "soar.fortigate_failed": "❌ FortiGate əməliyyatı {attempts} cəhddən sonra alınmadı: {error}.",
+  "auth.super_admin_granted": "OS bootstrap vasitəsilə super-admin girişi verildi.",
+  "node.status.active": "Aktiv",
+  "node.status.under_attack": "Hücum altında",
+  "node.status.isolated": "Təcrid edilib",
+  "node.status.offline": "Oflayn",
+  "action.isolate": "Təcrid et",
+  "action.process_tree": "Proses ağacı",
+  "action.ask_ai": "Sİ-dən soruş",
+  "action.rollback": "Geri qaytar"
+}

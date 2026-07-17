@@ -1,0 +1,19 @@
+# Python (server)
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.pytest_cache/
+
+# C++ (agent)
+build/
+*.o
+*.obj
+
+# Node (web)
+node_modules/
+dist/
+.vite/

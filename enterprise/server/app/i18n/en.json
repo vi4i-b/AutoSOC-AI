@@ -1,0 +1,18 @@
+{
+  "agent.suspected_compromise": "⚠️ Suspected agent compromise: {hostname} stopped sending heartbeats without a shutdown command.",
+  "agent.isolated": "🔒 Host {hostname} has been isolated from the network.",
+  "agent.rollback": "↩️ Isolation of {hostname} has been rolled back.",
+  "incident.critical": "🚨 Critical incident on {hostname} — {technique} ({tactic}).",
+  "incident.aggregated": "🚨 {count} similar alerts on {hostname} in the last {window}s — {technique}.",
+  "soar.fortigate_blocked": "🛡️ FortiGate: source {ip} blocked.",
+  "soar.fortigate_failed": "❌ FortiGate action failed after {attempts} attempts: {error}.",
+  "auth.super_admin_granted": "Super-admin access granted via OS bootstrap.",
+  "node.status.active": "Active",
+  "node.status.under_attack": "Under attack",
+  "node.status.isolated": "Isolated",
+  "node.status.offline": "Offline",
+  "action.isolate": "Isolate",
+  "action.process_tree": "Show process tree",
+  "action.ask_ai": "Ask AI",
+  "action.rollback": "Rollback"
+}
