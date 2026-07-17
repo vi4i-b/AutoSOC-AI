@@ -17,7 +17,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Agent, ApiCredential, Incident, Tenant
+from app.models import Agent, AgentCommand, ApiCredential, Incident, Tenant
 from app.security import decrypt_secret
 from app.services.ai_analyst import Finding
 from app.services.fortigate import FortiGateClient
@@ -53,9 +53,12 @@ async def run_isolation_playbook(session: AsyncSession, agent: Agent, finding: F
     """Isolate + block + notify. Returns a structured result for the API/logs."""
     lang = await _tenant_lang(session, agent.tenant_id)
 
-    # 1) Local isolation (agent enforces it on its next poll; status reflects it now).
+    # 1) Local isolation — the agent picks this up and applies it (iptables /
+    # netsh) on its next command poll, right after this heartbeat completes.
     agent.isolated = True
     agent.status = "isolated"
+    agent.shutdown_ack = False
+    session.add(AgentCommand(agent_id=agent.id, command="isolate", status="pending"))
 
     # 2) Open the incident record.
     incident = Incident(
@@ -98,6 +101,8 @@ async def rollback_incident(session: AsyncSession, incident: Incident) -> dict:
     if agent:
         agent.isolated = False
         agent.status = "active"
+        agent.shutdown_ack = False
+        session.add(AgentCommand(agent_id=agent.id, command="release", status="pending"))
     if incident.fortigate_ref:
         client = await load_fortigate(session, incident.tenant_id)
         if client is not None:

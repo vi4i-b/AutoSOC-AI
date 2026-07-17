@@ -1,17 +1,20 @@
-"""Agent enrollment, heartbeat ingestion, process-tree, and isolation."""
+"""Agent enrollment, heartbeat ingestion, process-tree, isolation, and the
+pull-based command queue the agent polls to enforce isolation locally.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import Principal, db_session, require, tenant_scope
-from app.models import Agent, EnrollmentToken, Event
-from app.schemas import EnrollRequest, HeartbeatRequest
+from app.models import Agent, AgentCommand, EnrollmentToken, Event
+from app.schemas import CommandResultRequest, EnrollRequest, HeartbeatRequest
+from app.security import generate_agent_secret, hash_agent_secret, verify_agent_secret
 from app.services.ai_analyst import analyst
 from app.services.soar import run_isolation_playbook
 
@@ -25,9 +28,30 @@ async def _tenant_for_enrollment(session: AsyncSession, token: str) -> str | Non
     return row.tenant_id if row else None
 
 
+async def _authenticated_agent(session: AsyncSession, agent_uid: str, secret: str | None) -> Agent:
+    """Look up an agent and verify its per-agent secret (X-Agent-Secret header).
+
+    Without this, anyone who knows/guesses an agent_uid could post fabricated
+    heartbeats, events, or a fake process tree for that agent — including
+    events crafted to trigger the AI analyst and the automated SOAR playbook.
+    """
+    agent = (await session.execute(
+        select(Agent).where(Agent.agent_uid == agent_uid))).scalars().first()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not enrolled.")
+    if not verify_agent_secret(secret or "", agent.secret_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid or missing agent secret.")
+    return agent
+
+
 @router.post("/enroll", status_code=201)
 async def enroll(body: EnrollRequest, session: AsyncSession = Depends(db_session)):
-    """Agents authenticate with their tenant's enrollment token (no user JWT)."""
+    """Agents authenticate with their tenant's enrollment token (no user JWT).
+
+    Issues a per-agent secret, returned ONCE in this response, which the agent
+    must present (X-Agent-Secret) on every subsequent call.
+    """
     tenant_id = await _tenant_for_enrollment(session, body.enrollment_token)
     if not tenant_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
@@ -37,33 +61,42 @@ async def enroll(body: EnrollRequest, session: AsyncSession = Depends(db_session
     if agent is None:
         agent = Agent(tenant_id=tenant_id, agent_uid=body.agent_uid)
         session.add(agent)
+
+    agent_secret = generate_agent_secret()
+    agent.secret_hash = hash_agent_secret(agent_secret)
     agent.hostname = body.hostname
     agent.platform = body.platform
     agent.ip = body.ip
-    agent.status = "active"
+    # Re-enrollment does not implicitly clear an operator-imposed isolation.
+    if not agent.isolated:
+        agent.status = "active"
     agent.last_heartbeat = time.time()
     agent.shutdown_ack = False
     await session.commit()
-    return {"agent_id": agent.id, "tenant_id": tenant_id, "heartbeat_interval_s": 5}
+    return {
+        "agent_id": agent.id, "tenant_id": tenant_id, "heartbeat_interval_s": 5,
+        "agent_secret": agent_secret,
+    }
 
 
 @router.post("/heartbeat")
-async def heartbeat(body: HeartbeatRequest, session: AsyncSession = Depends(db_session)):
+async def heartbeat(body: HeartbeatRequest, session: AsyncSession = Depends(db_session),
+                    x_agent_secret: str | None = Header(default=None)):
     """Agent ping every 5s: updates liveness, stores the process tree, runs AI."""
-    agent = (await session.execute(
-        select(Agent).where(Agent.agent_uid == body.agent_uid))).scalars().first()
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not enrolled.")
+    agent = await _authenticated_agent(session, body.agent_uid, x_agent_secret)
 
     agent.last_heartbeat = time.time()
     if body.shutdown:
         agent.shutdown_ack = True
-        agent.status = "offline"
+        # An operator-imposed isolation persists through a clean agent
+        # shutdown; only a plain online/offline agent reverts to "offline".
+        if not agent.isolated:
+            agent.status = "offline"
         await session.commit()
         return {"ok": True, "status": agent.status}
 
     agent.shutdown_ack = False
-    if agent.status in ("offline", "suspected_compromise"):
+    if agent.status in ("offline", "suspected_compromise") and not agent.isolated:
         agent.status = "active"
     if body.process_tree is not None:
         agent.process_tree = body.process_tree
@@ -85,6 +118,39 @@ async def heartbeat(body: HeartbeatRequest, session: AsyncSession = Depends(db_s
     if critical_action is None:
         await session.commit()
     return {"ok": True, "status": agent.status, "action": critical_action}
+
+
+@router.get("/{agent_uid}/commands")
+async def poll_commands(agent_uid: str, session: AsyncSession = Depends(db_session),
+                        x_agent_secret: str | None = Header(default=None)):
+    """The agent polls this after every heartbeat and enforces commands locally
+    (e.g. applying iptables isolation) — the server never reaches into the host."""
+    agent = await _authenticated_agent(session, agent_uid, x_agent_secret)
+    pending = (await session.execute(
+        select(AgentCommand).where(AgentCommand.agent_id == agent.id,
+                                   AgentCommand.status == "pending"))).scalars().all()
+    for cmd in pending:
+        cmd.status = "sent"
+        cmd.updated_at = time.time()
+    await session.commit()
+    return {"commands": [{"id": c.id, "command": c.command} for c in pending]}
+
+
+@router.post("/{agent_uid}/commands/{command_id}/result")
+async def report_command_result(agent_uid: str, command_id: str, body: CommandResultRequest,
+                                session: AsyncSession = Depends(db_session),
+                                x_agent_secret: str | None = Header(default=None)):
+    agent = await _authenticated_agent(session, agent_uid, x_agent_secret)
+    cmd = (await session.execute(
+        select(AgentCommand).where(AgentCommand.id == command_id,
+                                   AgentCommand.agent_id == agent.id))).scalars().first()
+    if cmd is None:
+        raise HTTPException(status_code=404, detail="Command not found.")
+    cmd.status = "done" if body.ok else "failed"
+    cmd.result = body.detail[:2000]
+    cmd.updated_at = time.time()
+    await session.commit()
+    return {"ok": True}
 
 
 @router.get("")
@@ -111,6 +177,8 @@ async def isolate(agent_uid: str, principal: Principal = Depends(require("agent:
     agent = await _get_scoped_agent(session, agent_uid, principal)
     agent.isolated = True
     agent.status = "isolated"
+    agent.shutdown_ack = False  # see heartbeat() — prevents an immediate revert to "offline"
+    session.add(AgentCommand(agent_id=agent.id, command="isolate", status="pending"))
     await session.commit()
     return {"agent_uid": agent.agent_uid, "status": agent.status, "isolated": True}
 

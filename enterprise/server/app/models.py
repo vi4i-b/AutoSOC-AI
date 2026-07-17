@@ -72,6 +72,24 @@ class Agent(Base):
     shutdown_ack: Mapped[bool] = mapped_column(Boolean, default=False)
     process_tree: Mapped[dict] = mapped_column(JSON, default=dict)
     enrolled_at: Mapped[float] = mapped_column(Float, default=_now)
+    # SHA-256 of the per-agent secret issued at enroll time. Every subsequent
+    # heartbeat/command call must present the plaintext secret (X-Agent-Secret
+    # header) — without this, anyone who guesses an agent_uid could inject
+    # fabricated heartbeats/events and trigger the SOAR playbook.
+    secret_hash: Mapped[str] = mapped_column(String(64), default="")
+
+
+class AgentCommand(Base):
+    """Pull-based command queue: the agent polls and enforces locally
+    (e.g. iptables isolation) — the server never pushes into the endpoint."""
+    __tablename__ = "agent_commands"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    agent_id: Mapped[str] = mapped_column(String(32), index=True)
+    command: Mapped[str] = mapped_column(String(32))          # isolate | release
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|sent|done|failed
+    result: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[float] = mapped_column(Float, default=_now)
+    updated_at: Mapped[float] = mapped_column(Float, default=_now)
 
 
 class Event(Base):

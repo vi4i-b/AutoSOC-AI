@@ -86,3 +86,25 @@ def decrypt_secret(blob: str) -> str:
     nonce, ct = raw[:12], raw[12:]
     aes = AESGCM(settings.resolved_master_key())
     return aes.decrypt(nonce, ct, None).decode("utf-8")
+
+
+# ── agent secrets ────────────────────────────────────────────────────
+# Separate from user passwords: issued once at enrollment, presented on every
+# subsequent agent call via the X-Agent-Secret header. A plain SHA-256 (not
+# PBKDF2) is fine here — this is a 256-bit random token, not a human-guessable
+# password, so a slow KDF buys nothing and would just add pointless CPU cost
+# to every 5-second heartbeat.
+
+def generate_agent_secret() -> str:
+    import secrets as _secrets
+    return _secrets.token_urlsafe(32)
+
+
+def hash_agent_secret(secret: str) -> str:
+    return hashlib.sha256((secret or "").encode("utf-8")).hexdigest()
+
+
+def verify_agent_secret(secret: str, stored_hash: str) -> bool:
+    if not secret or not stored_hash:
+        return False
+    return hmac.compare_digest(hash_agent_secret(secret), stored_hash)

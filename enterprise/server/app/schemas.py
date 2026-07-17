@@ -60,6 +60,11 @@ class NodeActionRequest(BaseModel):
     action: str  # isolate | rollback | ask_ai
 
 
+class CommandResultRequest(BaseModel):
+    ok: bool
+    detail: str = ""
+
+
 # ── credentials / integrations ───────────────────────────────────────
 
 class CredentialRequest(BaseModel):

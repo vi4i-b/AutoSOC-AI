@@ -59,8 +59,13 @@ class HeartbeatMonitor:
         flagged: list[str] = []
 
         async with SessionLocal() as session:
+            # "isolated" is deliberately excluded: it is an operator/SOAR-
+            # imposed state, not a passive liveness signal. An isolated host is
+            # *expected* to eventually go quiet; that must not silently revert
+            # its status to "offline" and hide that isolation was applied. It
+            # only changes via an explicit rollback or a fresh heartbeat.
             rows = (await session.execute(
-                select(Agent).where(Agent.status.in_(("active", "under_attack", "isolated"))))).scalars().all()
+                select(Agent).where(Agent.status.in_(("active", "under_attack"))))).scalars().all()
             langs: dict[str, str] = {}
             for agent in rows:
                 if agent.last_heartbeat >= cutoff:

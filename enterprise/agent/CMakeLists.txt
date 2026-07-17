@@ -12,19 +12,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-find_package(CURL REQUIRED)
-
 add_executable(autosoc-agent
   src/main.cpp
   src/process_tree.cpp
   src/anti_tamper.cpp
   src/http_client.cpp
+  src/isolation.cpp
 )
 
-target_link_libraries(autosoc-agent PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+# HTTP transport is implemented on raw BSD/Winsock2 sockets (see
+# src/http_client.cpp) — no libcurl dependency, keeping the agent lightweight.
+target_link_libraries(autosoc-agent PRIVATE nlohmann_json::nlohmann_json)
 
 if(WIN32)
-  target_link_libraries(autosoc-agent PRIVATE advapi32)
+  target_link_libraries(autosoc-agent PRIVATE advapi32 ws2_32)
 else()
   find_package(Threads REQUIRED)
   target_link_libraries(autosoc-agent PRIVATE Threads::Threads)
@@ -33,3 +34,4 @@ endif()
 # Build:  cmake -B build && cmake --build build -j
 # Run:    AUTOSOC_SERVERS=http://primary:8000,http://backup:8000 \
 #         AUTOSOC_ENROLLMENT_TOKEN=enr-... sudo ./build/autosoc-agent
+# Test:   ... sudo ./build/autosoc-agent --once   (single enroll+heartbeat cycle)

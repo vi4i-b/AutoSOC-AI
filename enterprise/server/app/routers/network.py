@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import SessionLocal
 from app.deps import Principal, db_session, get_principal, require, tenant_scope
-from app.models import Agent, NetworkEdge, Tenant
+from app.models import Agent, AgentCommand, NetworkEdge, Tenant
 from app.schemas import NodeActionRequest
 from app.security import decode_access_token
 
@@ -92,6 +92,24 @@ async def node_action(agent_uid: str, body: NodeActionRequest,
             raise HTTPException(status_code=403, detail="Permission 'network:isolate' required.")
         agent.isolated = True
         agent.status = "isolated"
+        # A prior clean shutdown may have left shutdown_ack=True; if we don't
+        # clear it, the heartbeat monitor's staleness sweep (services/heartbeat.py)
+        # silently flips status back to "offline" a few seconds later, even
+        # though `isolated` stays True — misleading the analyst's map view.
+        agent.shutdown_ack = False
+        # Queue the enforcement command so the agent applies it locally on its
+        # next check-in (see routers/agents.py poll_commands / main.cpp).
+        session.add(AgentCommand(agent_id=agent.id, command="isolate", status="pending"))
+        await session.commit()
+        return {"agent_uid": agent_uid, "status": agent.status}
+
+    if body.action == "rollback":
+        if not principal.has("incident:respond"):
+            raise HTTPException(status_code=403, detail="Permission 'incident:respond' required.")
+        agent.isolated = False
+        agent.status = "active"
+        agent.shutdown_ack = False
+        session.add(AgentCommand(agent_id=agent.id, command="release", status="pending"))
         await session.commit()
         return {"agent_uid": agent_uid, "status": agent.status}
 
