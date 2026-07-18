@@ -155,6 +155,24 @@ class LinuxFirewall(FirewallBackend):
 
     Rules are tagged with an ``AutoSOC_*`` comment so they can be listed and
     deleted precisely. Requires root.
+
+    Two hard-won correctness details:
+
+    * **Insert at the top, don't append.** A DROP appended with ``-A`` lands at
+      the *bottom* of INPUT — below UFW's jump rules (``-A INPUT -j
+      ufw-before-input`` etc.), which have usually already ACCEPTed the packet,
+      so the AutoSOC rule never fires. We therefore ``-I INPUT 1`` so every
+      AutoSOC rule sits at the very top of the chain and takes precedence over
+      whatever UFW/firewalld placed below it.
+    * **Loopback must be blocked explicitly for the self-scan to see it.** The
+      built-in verifier scans ``127.0.0.1``. Systems (and UFW) accept loopback
+      early (``-A INPUT -i lo -j ACCEPT``), so we add a dedicated
+      ``-i lo --dport <port> DROP`` rule — also inserted at position 1 — so a
+      local scan reports the port as filtered instead of open.
+
+    Cleanup deletes by the rule's *full specification* (which includes the
+    ``AutoSOC_*`` comment), so only rules AutoSOC created are ever removed — a
+    user's or UFW's own rules are never touched.
     """
 
     name = "iptables"
@@ -162,52 +180,73 @@ class LinuxFirewall(FirewallBackend):
     DPORT_RE = re.compile(r"--dport (\d+)")
     COMMENT_RE = re.compile(r'--comment "?(AutoSOC_[\w.:-]+)"?')
 
-    def _port_rule_args(self, port, protocol, rule_name):
-        return [
-            "INPUT",
-            "-p",
-            protocol,
-            "--dport",
-            str(port),
-            "-m",
-            "comment",
-            "--comment",
-            rule_name,
-            "-j",
-            "DROP",
-        ]
+    # ── rule specifications (chain excluded; we always target INPUT) ──
 
-    def _ip_rule_args(self, ip, rule_name):
-        return ["INPUT", "-s", ip, "-m", "comment", "--comment", rule_name, "-j", "DROP"]
+    def _port_rule_bodies(self, port, rule_name):
+        """Every iptables rule body AutoSOC creates to block one port.
 
-    def _delete_matching(self, rule_args):
-        """Delete every copy of a rule (iptables allows duplicates)."""
-        for _ in range(10):
-            result = run_command(["iptables", "-D", *rule_args])
+        For each of TCP and UDP: a general rule (all interfaces) plus an
+        explicit loopback (``-i lo``) rule, so a local 127.0.0.1 self-scan sees
+        the block too. Every body carries the same AutoSOC comment so cleanup
+        is exact."""
+        tag = ["-m", "comment", "--comment", rule_name]
+        bodies = []
+        for protocol in ("tcp", "udp"):
+            bodies.append(["-p", protocol, "--dport", str(port), *tag, "-j", "DROP"])
+            bodies.append(["-i", "lo", "-p", protocol, "--dport", str(port), *tag, "-j", "DROP"])
+        return bodies
+
+    def _ip_rule_body(self, ip, rule_name):
+        return ["-s", ip, "-m", "comment", "--comment", rule_name, "-j", "DROP"]
+
+    # ── primitive operations ─────────────────────────────────────────
+
+    def _insert_top(self, body):
+        """Insert a rule at INPUT position 1 so it overrides UFW/firewalld
+        rules, which sit lower in the chain."""
+        return run_command(["iptables", "-I", "INPUT", "1", *body])
+
+    def _delete_all(self, body):
+        """Delete every copy of exactly this rule (iptables allows duplicates).
+
+        Matching is by the full spec — which includes the ``AutoSOC_*``
+        comment — so only our own rules are removed; user/UFW rules are safe.
+        Insert and delete use the identical body, so the specs always match."""
+        for _ in range(20):
+            result = run_command(["iptables", "-D", "INPUT", *body])
             if not result.ok:
                 break
 
     def set_port_blocked(self, port, blocked):
         port = int(port)
         rule_name = f"{MANUAL_RULE_PREFIX}_{port}"
+        bodies = self._port_rule_bodies(port, rule_name)
 
-        messages = []
+        # Idempotent: always clear any existing AutoSOC rules for this port
+        # first. When unblocking, that is the entire job.
+        for body in bodies:
+            self._delete_all(body)
+
+        if not blocked:
+            return True, rule_name, "AutoSOC block rules removed. No broad allow rule was created."
+
         success = True
-        for protocol in ("tcp", "udp"):
-            rule_args = self._port_rule_args(port, protocol, rule_name)
-            self._delete_matching(rule_args)
-            if blocked:
-                result = run_command(["iptables", "-A", *rule_args])
-                if not result.ok:
-                    success = False
-                    messages.append(format_result(result))
+        messages = []
+        # Insert in reverse so the first body ends up highest after successive
+        # position-1 inserts (purely cosmetic; all are DROP and above UFW).
+        for body in reversed(bodies):
+            result = self._insert_top(body)
+            if not result.ok:
+                success = False
+                messages.append(format_result(result))
 
-        if blocked:
-            message = " ".join(messages) or "iptables DROP rules added for TCP and UDP."
-            if not success:
-                log.warning("iptables port block failed for %s: %s", port, message)
-            return success, rule_name, message
-        return True, rule_name, "AutoSOC block rule removed. No broad allow rule was created."
+        if success:
+            message = ("iptables DROP rules inserted at the top of INPUT for TCP+UDP "
+                       "(including loopback), overriding UFW.")
+        else:
+            message = " ".join(messages) or "One or more iptables rules failed."
+            log.warning("iptables port block failed for %s: %s", port, message)
+        return success, rule_name, message
 
     def block_ip(self, ip, rule_prefix="AutoSOC_Guard_Block"):
         normalized_ip, error = _normalize_ip(ip)
@@ -215,12 +254,12 @@ class LinuxFirewall(FirewallBackend):
             return False, "", error
 
         rule_name = f"{rule_prefix}_{normalized_ip}"
-        rule_args = self._ip_rule_args(normalized_ip, rule_name)
-        self._delete_matching(rule_args)
-        result = run_command(["iptables", "-I", *rule_args])
+        body = self._ip_rule_body(normalized_ip, rule_name)
+        self._delete_all(body)
+        result = self._insert_top(body)
         message = format_result(result)
         if result.ok:
-            return True, rule_name, message if message != "Ok." else "iptables DROP rule added."
+            return True, rule_name, message if message != "Ok." else "iptables DROP rule inserted at top of INPUT."
         log.warning("iptables IP block failed for %s: %s", normalized_ip, message)
         return False, rule_name, message
 
