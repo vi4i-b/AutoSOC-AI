@@ -18,6 +18,7 @@ windows stay in sync.
 """
 
 import json
+import threading
 from datetime import datetime
 
 import customtkinter as ctk
@@ -40,6 +41,64 @@ SEVERITY_COLORS = {
     "Critical": theme.STATUS_DANGER,
     "info": theme.TEXT_MUTED,
 }
+
+# The standard SOC toolset by function, shown in the Analyst Toolkit window.
+# Each tool: (display name, CLI to probe with shutil.which or None, one-liner).
+# The catalog is intentionally vendor-broad; the write-up lives in
+# docs/SOC_ANALYST_TOOLKIT.md. Anything with a CLI is detected on the host.
+ANALYST_TOOLKIT = [
+    ("SIEM & log analytics", [
+        ("Wazuh", "wazuh-control", "Open-source SIEM/XDR: log analysis, FIM, rule-based detection."),
+        ("Elastic / ELK", None, "Elasticsearch + Kibana for search, dashboards, correlation."),
+        ("Splunk", "splunk", "Enterprise SIEM & search — the incumbent in large SOCs."),
+        ("Graylog", None, "Centralized syslog/log management with alerting."),
+        ("AutoSOC (this app)", None, "Local ingestion, detection rules, log forwarding to any of the above."),
+    ]),
+    ("EDR / endpoint visibility", [
+        ("osquery", "osqueryi", "Query endpoints like a SQL database (processes, sockets, users)."),
+        ("Velociraptor", "velociraptor", "DFIR endpoint hunting & live-response at fleet scale."),
+        ("Wazuh agent", "wazuh-agentd", "Host IDS, file-integrity monitoring, log shipping."),
+        ("Microsoft Defender / Sysmon", None, "Windows endpoint telemetry (Sysmon events, Defender ATP)."),
+        ("AutoSOC agent", None, "Cross-platform Linux/Windows agent shipping process/net/log telemetry."),
+    ]),
+    ("Threat intelligence", [
+        ("VirusTotal", None, "File/URL/IP/domain reputation across 90+ engines (wired into Enrich)."),
+        ("AbuseIPDB", None, "Crowd-sourced IP abuse confidence scoring (wired into Enrich)."),
+        ("AlienVault OTX", None, "Community threat-pulse indicator feed (wired into Enrich)."),
+        ("MISP", None, "Threat-intel sharing platform for IOC storage & correlation."),
+        ("GreyNoise / Shodan", None, "Internet-wide scan context; exposed-service intelligence."),
+    ]),
+    ("Network security monitoring / IDS", [
+        ("Suricata", "suricata", "High-performance IDS/IPS + NSM with ET/Talos rulesets."),
+        ("Zeek (Bro)", "zeek", "Network metadata & protocol logging for hunting."),
+        ("Snort", "snort", "Signature-based IDS/IPS."),
+        ("Arkime", None, "Full-packet capture indexing & search."),
+        ("nmap", "nmap", "Host/service discovery & port scanning (used by AutoSOC port scans)."),
+    ]),
+    ("Detection engineering", [
+        ("Sigma", "sigma", "Vendor-neutral detection rules that compile to any SIEM query."),
+        ("YARA", "yara", "Pattern-matching to classify malware/files."),
+        ("MITRE ATT&CK", None, "The adversary TTP taxonomy AutoSOC maps detections to."),
+        ("Atomic Red Team", None, "Small, portable tests to validate detections per ATT&CK technique."),
+    ]),
+    ("DFIR & malware analysis", [
+        ("Volatility", "vol.py", "Memory forensics framework."),
+        ("The Sleuth Kit / Autopsy", "tsk_recover", "Disk forensics & timeline analysis."),
+        ("Plaso / log2timeline", "log2timeline.py", "Super-timeline generation from many artifact types."),
+        ("CyberChef", None, "The 'cyber swiss-army knife' for decode/deobfuscate operations."),
+        ("Cuckoo / CAPE", None, "Automated malware sandbox detonation."),
+    ]),
+    ("Purple-team / validation (authorized use only)", [
+        ("Metasploit", "msfconsole", "Exploitation framework — for authorized detection validation & pen-tests."),
+        ("Caldera", None, "MITRE's automated adversary-emulation platform."),
+        ("Atomic Red Team", None, "Run individual ATT&CK techniques to confirm your alerts fire."),
+    ]),
+    ("SOAR & case management", [
+        ("TheHive + Cortex", None, "Incident case management with analyzer orchestration."),
+        ("Shuffle", None, "Open-source SOAR for automating response playbooks."),
+        ("AutoSOC response", None, "Built-in endpoint isolation + firewall block-list playbooks."),
+    ]),
+]
 
 
 class SOCConsoleWindow(ctk.CTkToplevel):
@@ -175,6 +234,17 @@ class SOCConsoleWindow(ctk.CTkToplevel):
             command=self.refresh_all,
         ).pack(side="right", padx=(0, 12))
 
+        ctk.CTkButton(
+            header,
+            text="🧰 Analyst Toolkit",
+            width=150,
+            height=32,
+            corner_radius=12,
+            fg_color=theme.BTN_NEUTRAL,
+            hover_color=theme.BTN_NEUTRAL_HOVER,
+            command=self._open_toolkit,
+        ).pack(side="right", padx=(0, 12))
+
         if self.app.can("admin"):
             ctk.CTkButton(
                 header,
@@ -189,6 +259,9 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                 text_color="#9ce0bd",
                 command=self._admin_dialog,
             ).pack(side="right", padx=(0, 12))
+
+    def _open_toolkit(self):
+        _AnalystToolkitWindow(self, self.app)
 
     def _admin_dialog(self):
         if not self.app.require("admin"):
@@ -1027,9 +1100,16 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                                        placeholder_text="Look up an indicator against the watchlist…")
         self.ioc_lookup.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.ioc_lookup.bind("<Return>", lambda e: self._lookup_ioc())
-        ctk.CTkButton(lookup_bar, text="Look up", width=100, height=34, corner_radius=10,
+        ctk.CTkButton(lookup_bar, text="Look up", width=90, height=34, corner_radius=10,
                       fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
-                      command=self._lookup_ioc).grid(row=0, column=1)
+                      command=self._lookup_ioc).grid(row=0, column=1, padx=(0, 6))
+        ctk.CTkButton(lookup_bar, text="⚡ Enrich", width=100, height=34, corner_radius=10,
+                      fg_color=theme.ACCENT_BLUE, hover_color=theme.ACCENT_BLUE_HOVER,
+                      command=self._enrich_ioc).grid(row=0, column=2, padx=(0, 6))
+        ctk.CTkButton(lookup_bar, text="Intel Keys", width=110, height=34, corner_radius=10,
+                      fg_color="transparent", hover_color=theme.BTN_OUTLINE_HOVER,
+                      border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
+                      command=self._intel_keys_dialog).grid(row=0, column=3)
         self.ioc_lookup_result = ctk.CTkLabel(tab, text="", text_color=theme.TEXT_MUTED,
                                               font=ctk.CTkFont(size=12), anchor="w")
         self.ioc_lookup_result.grid(row=1, column=0, sticky="ew", padx=12, pady=(44, 0))
@@ -1062,6 +1142,18 @@ class SOCConsoleWindow(ctk.CTkToplevel):
             )
         else:
             self.ioc_lookup_result.configure(text=f"No watchlist match for {value}.", text_color=theme.STATUS_GOOD)
+
+    def _enrich_ioc(self):
+        value = self.ioc_lookup.get().strip() or self.ioc_value.get().strip()
+        if not value:
+            self.ioc_lookup_result.configure(text="Enter an indicator to enrich.", text_color=theme.STATUS_WARN)
+            return
+        _EnrichmentWindow(self, self.app, self.db, value)
+
+    def _intel_keys_dialog(self):
+        if not self.app.require("admin"):
+            return
+        _IntelKeysDialog(self, self.app, self.db)
 
     def _refresh_intel(self):
         self._clear(self.ioc_list)
@@ -2204,3 +2296,210 @@ class _LogAnalysisWindow(ctk.CTkToplevel):
                 pass
             self._auto_job = None
         super().destroy()
+
+
+class _EnrichmentWindow(ctk.CTkToplevel):
+    """Query configured threat-intel providers for one indicator (off-thread)."""
+
+    def __init__(self, master, app, db, indicator):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.indicator = indicator
+        self.title("Threat-Intel Enrichment")
+        self.geometry("640x520")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.transient(master)
+        apply_window_icon(self)
+
+        from autosoc.intel import classify_indicator
+        kind = classify_indicator(indicator)
+        ctk.CTkLabel(self, text=f"Enrichment · {indicator}", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        ctk.CTkLabel(self, text=f"Classified as: {kind}", text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(0, 10))
+
+        self.output = ctk.CTkTextbox(self, fg_color=theme.BG_CONSOLE, corner_radius=12, text_color=theme.TEXT_SOFT,
+                                     font=ctk.CTkFont(family="Consolas", size=12), wrap="word")
+        self.output.pack(fill="both", expand=True, padx=20, pady=(0, 12))
+        self.output.tag_config("bad", foreground=theme.STATUS_DANGER)
+        self.output.tag_config("good", foreground=theme.STATUS_GOOD)
+        self.output.tag_config("err", foreground=theme.STATUS_WARN)
+
+        ctk.CTkButton(self, text="Close", height=34, width=120, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self.destroy).pack(pady=(0, 14))
+
+        enricher = None
+        try:
+            from autosoc.intel import ThreatIntelEnricher
+            enricher = ThreatIntelEnricher(db)
+        except Exception as exc:  # pragma: no cover - defensive
+            self._render_line(f"[ERROR] Could not initialise enrichment: {exc}\n", "err")
+
+        if enricher is None:
+            return
+        if not enricher.configured_providers():
+            self._render_line(
+                "No threat-intel providers configured.\n\n"
+                "Add a VirusTotal, AbuseIPDB, or AlienVault OTX API key via the "
+                "'Intel Keys' button, then try again. All three offer free tiers.\n", "err")
+            return
+
+        self._render_line("Querying: " + ", ".join(enricher.configured_providers()) + " …\n\n")
+        threading.Thread(target=self._run, args=(enricher,), daemon=True).start()
+
+    def _run(self, enricher):
+        try:
+            verdicts = enricher.enrich(self.indicator)
+        except Exception as exc:  # enricher already guards; UI belt-and-suspenders
+            self._safe(lambda: self._render_line(f"[ERROR] {exc}\n", "err"))
+            return
+        self._safe(lambda: self._render_verdicts(verdicts))
+
+    def _render_verdicts(self, verdicts):
+        self.output.configure(state="normal")
+        self.output.delete("0.0", "end")
+        if not verdicts:
+            self.output.insert("end", "No providers returned a result.\n")
+        for v in verdicts:
+            if not v.ok:
+                self.output.insert("end", f"⚠ {v.provider}: {v.error}\n\n", "err")
+                continue
+            if v.malicious:
+                tag, mark = "bad", "✖ MALICIOUS"
+            elif v.malicious is False:
+                tag, mark = "good", "✔ clean"
+            else:
+                tag, mark = "err", "? unknown"
+            self.output.insert("end", f"{v.provider}: {mark}  ({v.score})\n", tag)
+            self.output.insert("end", f"   {v.detail}\n")
+            if v.link:
+                self.output.insert("end", f"   {v.link}\n")
+            self.output.insert("end", "\n")
+        self.output.configure(state="disabled")
+
+    def _render_line(self, text, tag=None):
+        self.output.configure(state="normal")
+        self.output.insert("end", text, tag or ())
+        self.output.configure(state="disabled")
+
+    def _safe(self, fn):
+        try:
+            self.after(0, fn)
+        except Exception:
+            pass
+
+
+class _IntelKeysDialog(ctk.CTkToplevel):
+    """Configure threat-intel provider API keys (stored in owner-only settings)."""
+
+    def __init__(self, master, app, db):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.title("Threat-Intel API Keys")
+        self.geometry("600x420")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.attributes("-topmost", True)
+        self.transient(master)
+        apply_window_icon(self)
+
+        from autosoc.intel.enrichment import SETTING_VT, SETTING_ABUSEIPDB, SETTING_OTX
+        self._keys = {"VirusTotal": SETTING_VT, "AbuseIPDB": SETTING_ABUSEIPDB, "AlienVault OTX": SETTING_OTX}
+
+        ctk.CTkLabel(self, text="Threat-Intel Providers", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(
+            self,
+            text=("Paste an API key to enable each provider (all have free tiers). Keys are stored "
+                  "locally and never shown in logs. Leave a field blank to disable that provider."),
+            text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left", wraplength=540,
+        ).pack(anchor="w", padx=20, pady=(0, 12))
+
+        form = ctk.CTkFrame(self, fg_color="transparent")
+        form.pack(fill="x", padx=20)
+        form.grid_columnconfigure(1, weight=1)
+        self.entries = {}
+        for row, (label, key) in enumerate(self._keys.items()):
+            ctk.CTkLabel(form, text=label, text_color=theme.TEXT_MUTED,
+                         font=ctk.CTkFont(size=12)).grid(row=row, column=0, sticky="w", pady=8, padx=(0, 10))
+            entry = ctk.CTkEntry(form, height=34, fg_color=theme.BG_FIELD, border_color=theme.FIELD_BORDER,
+                                 show="•")
+            value = self.db.get_setting(key, "")
+            if value:
+                entry.insert(0, value)
+            entry.grid(row=row, column=1, sticky="ew", pady=8)
+            self.entries[key] = entry
+
+        self.status = ctk.CTkLabel(self, text="", text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11))
+        self.status.pack(anchor="w", padx=20, pady=(8, 0))
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=16)
+        ctk.CTkButton(row, text="Close", width=90, height=34, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self.destroy).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(row, text="Save", width=90, height=34, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self._save).pack(side="right")
+
+    def _save(self):
+        enabled = []
+        for key, entry in self.entries.items():
+            value = entry.get().strip()
+            self.db.set_setting(key, value)
+            if value:
+                enabled.append(key)
+        self.db.add_audit_event("intel_keys_changed", self.app.current_user.get("username", "admin"),
+                                f"Threat-intel providers configured: {len(enabled)}.")
+        self.status.configure(text=f"Saved. {len(enabled)} provider(s) enabled.", text_color=theme.STATUS_GOOD)
+
+
+class _AnalystToolkitWindow(ctk.CTkToplevel):
+    """Reference catalog of the standard SOC toolset, with local-availability
+    detection for the CLI tools AutoSOC can hand off to."""
+
+    def __init__(self, master, app):
+        super().__init__(master)
+        self.app = app
+        self.title("SOC Analyst Toolkit")
+        self.geometry("860x640")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.transient(master)
+        apply_window_icon(self)
+
+        ctk.CTkLabel(self, text="SOC Analyst Toolkit", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        ctk.CTkLabel(
+            self,
+            text=("The tooling a SOC uses day-to-day, by function. ● = detected on this host and "
+                  "ready to launch from a terminal; ○ = not installed here (install it or use the "
+                  "vendor/cloud service). Full write-up: docs/SOC_ANALYST_TOOLKIT.md."),
+            text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left", wraplength=800,
+        ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        scroll = ctk.CTkScrollableFrame(self, fg_color=theme.BG_CONSOLE, corner_radius=12)
+        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        scroll.grid_columnconfigure(0, weight=1)
+
+        import shutil
+        row = 0
+        for category, tools in ANALYST_TOOLKIT:
+            ctk.CTkLabel(scroll, text=category, text_color=theme.ACCENT_CYAN,
+                         font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
+                row=row, column=0, sticky="w", padx=12, pady=(12, 4))
+            row += 1
+            for name, cli, desc in tools:
+                present = bool(cli and shutil.which(cli))
+                mark = "●" if present else "○"
+                color = theme.STATUS_GOOD if present else theme.TEXT_MUTED
+                text = f"{mark}  {name}" + (f"  ({cli})" if cli else "")
+                ctk.CTkLabel(scroll, text=text, text_color=color,
+                             font=ctk.CTkFont(size=12, weight="bold"), anchor="w").grid(
+                    row=row, column=0, sticky="w", padx=(24, 12))
+                row += 1
+                ctk.CTkLabel(scroll, text=desc, text_color=theme.TEXT_MUTED,
+                             font=ctk.CTkFont(size=11), anchor="w", justify="left", wraplength=760).grid(
+                    row=row, column=0, sticky="w", padx=(40, 12), pady=(0, 6))
+                row += 1
+
+        ctk.CTkButton(self, text="Close", height=34, width=120, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self.destroy).pack(pady=(0, 14))
