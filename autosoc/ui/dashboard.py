@@ -31,7 +31,7 @@ from autosoc.phishing import PhishingAnalyzer
 from autosoc.ports import DEFAULT_RISKY_PORTS, TRACKED_PORTS
 from autosoc.scanner import NetworkScanner, count_open_ports, summarize_single_port_state
 from autosoc.system import hardening
-from autosoc.system.firewall import get_firewall
+from autosoc.system.firewall import firewall_conflict_warning, get_firewall
 from autosoc.system.log_monitor import create_log_listener
 from autosoc.system.netinfo import target_appears_remote
 from autosoc.system.privileges import is_admin, privilege_hint
@@ -75,6 +75,8 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         self.firewall = get_firewall()
         self.port_definitions = dict(TRACKED_PORTS)
         self.switches = {}
+        # Warn once per session if UFW/firewalld is co-managing the firewall.
+        self._firewall_conflict_warned = False
 
         self._init_telegram_state()
 
@@ -424,6 +426,16 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
         self.result_box.insert("0.0", "[FIREWALL] All tracked ports blocked\n", "danger")
         self._refresh_dashboard_metrics()
 
+    def _warn_firewall_conflict_once(self):
+        """Surface a UFW/firewalld co-management warning the first time the
+        operator touches Port Control this session (detection is best-effort)."""
+        if self._firewall_conflict_warned:
+            return
+        self._firewall_conflict_warned = True
+        warning = firewall_conflict_warning()
+        if warning:
+            self.result_box.insert("0.0", f"[FIREWALL WARNING] {warning}\n", "danger")
+
     def toggle_port(self, port, switch_obj, verify=True):
         is_open = bool(switch_obj.get())
         service = self.port_definitions.get(port, "Unknown")
@@ -439,6 +451,8 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
                 f"[ADMIN] Elevated privileges are missing. {privilege_hint()}\n",
                 "danger",
             )
+
+        self._warn_firewall_conflict_once()
 
         success, rule_name, firewall_message = self.firewall.set_port_blocked(port, blocked=not is_open)
         if not success:

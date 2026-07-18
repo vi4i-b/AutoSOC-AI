@@ -15,6 +15,7 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 
 from autosoc.logging_setup import get_logger
 from autosoc.system.commands import format_result, run_command
@@ -22,6 +23,71 @@ from autosoc.system.commands import format_result, run_command
 log = get_logger("system.firewall")
 
 MANUAL_RULE_PREFIX = "AutoSOC_Manual"
+
+
+# ── conflicting-manager detection ────────────────────────────────────
+
+def _service_active(unit: str) -> bool:
+    """True when systemd reports ``unit`` as active. No root required; returns
+    False on non-systemd hosts (systemctl missing → command fails)."""
+    result = run_command(["systemctl", "is-active", unit])
+    return result.stdout.strip() == "active"
+
+
+def _ufw_active() -> bool:
+    if _service_active("ufw"):
+        return True
+    if not shutil.which("ufw"):
+        return False
+    # `ufw status` needs root; when it works it's authoritative.
+    result = run_command(["ufw", "status"])
+    return "Status: active" in result.stdout
+
+
+def _firewalld_active() -> bool:
+    if _service_active("firewalld"):
+        return True
+    if not shutil.which("firewall-cmd"):
+        return False
+    result = run_command(["firewall-cmd", "--state"])
+    return result.stdout.strip() == "running"
+
+
+def active_firewall_managers() -> list:
+    """Other firewall managers currently active on this host.
+
+    AutoSOC writes raw iptables rules; when UFW or firewalld is *also* active it
+    manages the same chains and can shadow AutoSOC's rules (before this app
+    started inserting at the top of INPUT) or wipe them on its next reload. The
+    UI surfaces this so an operator isn't misled. Best-effort, no root needed,
+    never raises — any detection error simply means "not detected"."""
+    if os.name != "posix":
+        return []
+    managers = []
+    try:
+        if _ufw_active():
+            managers.append("ufw")
+        if _firewalld_active():
+            managers.append("firewalld")
+    except OSError as exc:  # pragma: no cover - defensive
+        log.debug("firewall-manager detection error: %s", exc)
+    return managers
+
+
+def firewall_conflict_warning() -> str:
+    """A one-paragraph operator warning naming any active conflicting manager,
+    or "" when there is no conflict."""
+    managers = active_firewall_managers()
+    if not managers:
+        return ""
+    names = " and ".join(managers)
+    return (
+        f"{names} is active on this host and manages the same iptables chains as "
+        f"AutoSOC. AutoSOC now inserts its rules at the top of INPUT so they take "
+        f"effect immediately, but a `{managers[0]} reload` or reboot will flush "
+        f"them (they are runtime rules). Avoid managing the same port with both "
+        f"{names} and AutoSOC."
+    )
 
 
 class FirewallBackend:

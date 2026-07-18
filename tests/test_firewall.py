@@ -2,7 +2,12 @@ import unittest
 from unittest import mock
 
 from autosoc.system.commands import CommandResult
-from autosoc.system.firewall import LinuxFirewall, WindowsFirewall
+from autosoc.system.firewall import (
+    LinuxFirewall,
+    WindowsFirewall,
+    active_firewall_managers,
+    firewall_conflict_warning,
+)
 
 
 class LinuxFirewallTests(unittest.TestCase):
@@ -106,6 +111,51 @@ class LinuxFirewallTests(unittest.TestCase):
             return_value=CommandResult(0, listing, ""),
         ):
             self.assertEqual(self.backend.blocked_ports(), {445})
+
+
+class FirewallConflictDetectionTests(unittest.TestCase):
+    """UFW/firewalld co-management detection (best-effort, no root)."""
+
+    def _systemctl(self, active_units):
+        """Fake run_command: `systemctl is-active <unit>` → active/inactive."""
+        def fake(args, timeout=30):
+            if args[:2] == ["systemctl", "is-active"]:
+                unit = args[2]
+                return CommandResult(0 if unit in active_units else 3,
+                                     "active" if unit in active_units else "inactive", "")
+            # Any tool fallback (ufw status / firewall-cmd) → report nothing.
+            return CommandResult(1, "", "")
+        return fake
+
+    def test_detects_ufw(self):
+        with mock.patch("autosoc.system.firewall.os.name", "posix"), \
+             mock.patch("autosoc.system.firewall.run_command", side_effect=self._systemctl({"ufw"})):
+            self.assertEqual(active_firewall_managers(), ["ufw"])
+
+    def test_detects_firewalld(self):
+        with mock.patch("autosoc.system.firewall.os.name", "posix"), \
+             mock.patch("autosoc.system.firewall.run_command", side_effect=self._systemctl({"firewalld"})):
+            self.assertEqual(active_firewall_managers(), ["firewalld"])
+
+    def test_detects_both(self):
+        with mock.patch("autosoc.system.firewall.os.name", "posix"), \
+             mock.patch("autosoc.system.firewall.run_command", side_effect=self._systemctl({"ufw", "firewalld"})):
+            self.assertEqual(active_firewall_managers(), ["ufw", "firewalld"])
+
+    def test_none_active(self):
+        with mock.patch("autosoc.system.firewall.os.name", "posix"), \
+             mock.patch("autosoc.system.firewall.shutil.which", return_value=None), \
+             mock.patch("autosoc.system.firewall.run_command", side_effect=self._systemctl(set())):
+            self.assertEqual(active_firewall_managers(), [])
+            self.assertEqual(firewall_conflict_warning(), "")
+
+    def test_warning_names_active_manager(self):
+        with mock.patch("autosoc.system.firewall.os.name", "posix"), \
+             mock.patch("autosoc.system.firewall.run_command", side_effect=self._systemctl({"ufw"})):
+            warning = firewall_conflict_warning()
+        self.assertIn("ufw", warning)
+        self.assertIn("top of INPUT", warning)
+        self.assertIn("reload", warning)
 
 
 class WindowsFirewallTests(unittest.TestCase):
