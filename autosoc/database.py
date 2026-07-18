@@ -169,6 +169,10 @@ class SOCDatabase:
                 )
                 """
             )
+            # Tamper-evident audit log: each row carries a hash chaining it to
+            # the previous one, so any later deletion/edit is detectable
+            # (verify_audit_chain). Added here, after the table exists.
+            self._ensure_column(cursor, "audit_events", "entry_hash", "TEXT DEFAULT ''")
 
             cursor.execute(
                 """
@@ -734,17 +738,83 @@ class SOCDatabase:
             )
             return cursor.fetchall()
 
+    @staticmethod
+    def _audit_hash(prev_hash, event_type, actor, details, created_at):
+        """Hash chaining one audit row to the previous one (tamper-evidence).
+
+        Compliance controls (ISO 27001 A.8.15, SOC 2 CC7.x, PCI-DSS 10.5)
+        require logs to be protected from modification. Chaining each entry's
+        hash into the next means any later edit or deletion breaks the chain
+        and is detectable by verify_audit_chain()."""
+        import hashlib
+
+        payload = f"{prev_hash}|{event_type}|{actor}|{details}|{created_at}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _last_audit_hash(self, cursor):
+        row = cursor.execute(
+            "SELECT entry_hash FROM audit_events ORDER BY id DESC LIMIT 1").fetchone()
+        # sqlite3.Row → index by column; genesis when the table is empty.
+        return (row["entry_hash"] if row and row["entry_hash"] else ("0" * 64))
+
     def add_audit_event(self, event_type, actor="", details=""):
         with self._lock:
             cursor = self.conn.cursor()
+            created_at = self._now()
+            prev_hash = self._last_audit_hash(cursor)
+            entry_hash = self._audit_hash(prev_hash, event_type, actor or "", details or "", created_at)
             cursor.execute(
                 """
-                INSERT INTO audit_events (event_type, actor, details, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO audit_events (event_type, actor, details, created_at, entry_hash)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (event_type, actor or "", details or "", self._now()),
+                (event_type, actor or "", details or "", created_at, entry_hash),
             )
             self.conn.commit()
+
+    def verify_audit_chain(self):
+        """Recompute the audit hash chain end-to-end.
+
+        Returns (ok, first_broken_id). ok=True means the log is intact; if a row
+        was edited or deleted, ok=False and first_broken_id points at the first
+        row whose stored hash no longer matches the recomputed chain."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                "SELECT id, event_type, actor, details, created_at, entry_hash "
+                "FROM audit_events ORDER BY id ASC").fetchall()
+        prev_hash = "0" * 64
+        for row in rows:
+            expected = self._audit_hash(prev_hash, row["event_type"], row["actor"] or "",
+                                        row["details"] or "", row["created_at"])
+            stored = row["entry_hash"] or ""
+            # Rows written before this feature existed have no hash; treat the
+            # first hashed row as the start of the verifiable chain.
+            if stored == "":
+                prev_hash = "0" * 64
+                continue
+            if expected != stored:
+                return False, row["id"]
+            prev_hash = stored
+        return True, None
+
+    def export_audit_log(self, path):
+        """Write the full audit trail (with hashes) to a CSV for evidence/export.
+        Returns the number of rows written."""
+        import csv
+
+        with self._lock:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                "SELECT id, created_at, event_type, actor, details, entry_hash "
+                "FROM audit_events ORDER BY id ASC").fetchall()
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["id", "created_at", "event_type", "actor", "details", "entry_hash"])
+            for row in rows:
+                writer.writerow([row["id"], row["created_at"], row["event_type"],
+                                 row["actor"], row["details"], row["entry_hash"]])
+        return len(rows)
 
     def get_recent_audit_events(self, limit=50):
         with self._lock:

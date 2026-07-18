@@ -1954,6 +1954,26 @@ class _AdminDialog(ctk.CTkToplevel):
         self.invite_result.insert("end", "Generated invite codes appear here (shown once).")
         self.invite_result.configure(state="disabled")
 
+        # ── Audit-log integrity ─────────────────────────────────────
+        audit = ctk.CTkFrame(self, fg_color=theme.BG_PANEL, corner_radius=12)
+        audit.pack(fill="x", padx=20, pady=(0, 8))
+        ctk.CTkLabel(audit, text="Audit log (tamper-evident)", text_color=theme.TEXT_SOFT,
+                     font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=14, pady=(12, 2))
+        ctk.CTkLabel(audit, text="Every audit entry is hash-chained to the previous one; verification "
+                                 "detects any later edit or deletion (ISO 27001 A.8.15 / PCI-DSS 10.5).",
+                     text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left",
+                     wraplength=560).pack(anchor="w", padx=14, pady=(0, 6))
+        arow = ctk.CTkFrame(audit, fg_color="transparent")
+        arow.pack(fill="x", padx=14, pady=(0, 10))
+        ctk.CTkButton(arow, text="Verify Integrity", width=150, height=32, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=self._verify_audit).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(arow, text="Export CSV", width=120, height=32, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=self._export_audit).pack(side="left")
+        self.audit_status = ctk.CTkLabel(arow, text="", text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=12))
+        self.audit_status.pack(side="left", padx=(12, 0))
+
         # ── Users list ──────────────────────────────────────────────
         ctk.CTkLabel(self, text="Users & roles", text_color=theme.TEXT_MUTED,
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=22, pady=(6, 2))
@@ -1964,6 +1984,29 @@ class _AdminDialog(ctk.CTkToplevel):
         ctk.CTkButton(self, text="Close", height=34, width=120, fg_color=theme.ACCENT_BLUE,
                       hover_color=theme.ACCENT_BLUE_HOVER, command=self.destroy).pack(pady=(0, 14))
         self._refresh_users()
+
+    def _verify_audit(self):
+        ok, broken = self.db.verify_audit_chain()
+        if ok:
+            self.audit_status.configure(text="✔ Intact — chain verified.", text_color=theme.STATUS_GOOD)
+        else:
+            self.audit_status.configure(text=f"✖ TAMPERING detected at entry #{broken}.",
+                                        text_color=theme.STATUS_DANGER)
+
+    def _export_audit(self):
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Export audit log", defaultextension=".csv",
+            initialfile="autosoc_audit_log.csv", filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            count = self.db.export_audit_log(path)
+            self.db.add_audit_event("audit_log_exported", self.app.current_user.get("username", "admin"),
+                                    f"Exported {count} audit entries.")
+            self.audit_status.configure(text=f"Exported {count} entries.", text_color=theme.STATUS_GOOD)
+        except OSError as exc:
+            self.audit_status.configure(text=f"Export failed: {exc}", text_color=theme.STATUS_ERROR)
 
     def _create_invite(self):
         code = self.db.create_invite(role=self.invite_role.get(), ttl_hours=72, created_by=self.app.current_user.get("username", "admin"))
