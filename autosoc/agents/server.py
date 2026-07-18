@@ -80,6 +80,10 @@ class _CollectorHandler(BaseHTTPRequestHandler):
     def engine(self):
         return getattr(self.server, "autosoc_engine", None)
 
+    @property
+    def forwarder(self):
+        return getattr(self.server, "autosoc_forwarder", None)
+
     def _send_json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -334,6 +338,9 @@ class _CollectorHandler(BaseHTTPRequestHandler):
             if message.strip():
                 self.db.add_ingested_log(message, agent_id=agent_id, source=source, severity=severity)
                 stored += 1
+                forwarder = self.forwarder
+                if forwarder is not None and forwarder.enabled:
+                    forwarder.forward(message, agent_id=agent_id, source=source, severity=severity)
                 if engine is not None:
                     try:
                         engine.evaluate_log(agent_id, source, message)
@@ -346,7 +353,7 @@ class _CollectorHandler(BaseHTTPRequestHandler):
 class CollectorService:
     """Starts/stops the collector HTTP server in a background thread."""
 
-    def __init__(self, db, host=None, port=None, engine=None):
+    def __init__(self, db, host=None, port=None, engine=None, forwarder=None):
         self.db = db
         self.engine = engine
         self.host = host or (os.getenv("AUTOSOC_COLLECTOR_HOST") or "0.0.0.0").strip()
@@ -355,6 +362,18 @@ class CollectorService:
         self.port = int(port) if port is not None else int(os.getenv("AUTOSOC_COLLECTOR_PORT") or DEFAULT_PORT)
         self._httpd = None
         self._thread = None
+        # Optional forwarding of every ingested log to an external destination
+        # (syslog/SIEM and/or a file), configured in the SOC console. A shared
+        # forwarder can be injected so the syslog receiver uses the same one.
+        if forwarder is None:
+            from autosoc.system.log_forwarder import LogForwarder
+
+            forwarder = LogForwarder(db)
+        self.forwarder = forwarder
+
+    def reload_forwarder(self):
+        """Apply changed log-destination settings without a restart."""
+        self.forwarder.reload()
 
     @property
     def running(self) -> bool:
@@ -372,6 +391,7 @@ class CollectorService:
 
         httpd.autosoc_db = self.db
         httpd.autosoc_engine = self.engine
+        httpd.autosoc_forwarder = self.forwarder
         httpd.daemon_threads = True
         self._httpd = httpd
         self._thread = threading.Thread(target=httpd.serve_forever, name="AutoSOCCollector", daemon=True)

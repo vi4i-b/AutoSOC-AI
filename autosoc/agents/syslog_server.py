@@ -88,10 +88,12 @@ def parse_syslog(raw, sender_ip):
 
 class SyslogService:
     def __init__(self, db, on_detection=None, host="0.0.0.0", port=None,
-                 threshold=5, window_seconds=60, engine=None):
+                 threshold=5, window_seconds=60, engine=None, forwarder=None):
         self.db = db
         self.on_detection = on_detection
         self.engine = engine
+        # Optional external forwarding of every syslog line (see LogForwarder).
+        self.forwarder = forwarder
         self.host = host
         self.port = int(port) if port is not None else int(os.getenv("AUTOSOC_SYSLOG_PORT") or DEFAULT_SYSLOG_PORT)
         self.tracker = BruteForceTracker(threshold=threshold, window_seconds=window_seconds)
@@ -148,6 +150,8 @@ class SyslogService:
             if not message:
                 return
             self.db.add_ingested_log(message[:2000], agent_id=host, source="syslog", severity=severity)
+            if self.forwarder is not None and self.forwarder.enabled:
+                self.forwarder.forward(message[:2000], agent_id=host, source="syslog", severity=severity)
             if self.engine is not None:
                 try:
                     self.engine.evaluate_log(host, "syslog", message)

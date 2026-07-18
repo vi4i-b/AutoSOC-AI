@@ -1486,11 +1486,25 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
 
     # ── endpoint collector ───────────────────────────────────────────
 
+    def log_forwarder(self):
+        """The single shared LogForwarder both the collector and syslog use, so
+        a destination configured once applies to every ingestion path."""
+        if getattr(self, "_forwarder", None) is None:
+            from autosoc.system.log_forwarder import LogForwarder
+
+            self._forwarder = LogForwarder(self.db)
+        return self._forwarder
+
+    def reload_log_forwarder(self):
+        """Apply changed log-destination settings to the running services."""
+        self.log_forwarder().reload()
+
     def start_collector(self):
         from autosoc.agents.server import CollectorService
 
         if self.collector is None:
-            self.collector = CollectorService(self.db, engine=self.rule_engine)
+            self.collector = CollectorService(self.db, engine=self.rule_engine,
+                                              forwarder=self.log_forwarder())
         ok, message = self.collector.start()
         self.db.add_audit_event(
             "collector_started" if ok else "collector_start_failed",
@@ -1553,7 +1567,7 @@ class AutoSOCApp(DashboardLayoutMixin, ctk.CTk):
 
         if self.syslog is None:
             self.syslog = SyslogService(self.db, on_detection=self.on_bruteforce_detected,
-                                        engine=self.rule_engine)
+                                        engine=self.rule_engine, forwarder=self.log_forwarder())
         ok, message = self.syslog.start()
         self.db.add_audit_event(
             "syslog_started" if ok else "syslog_start_failed",

@@ -1104,12 +1104,18 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                                       placeholder_text="Search ingested logs (message, source, agent)…")
         self.log_query.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.log_query.bind("<Return>", lambda e: self._refresh_logs())
-        ctk.CTkButton(bar, text="Search", width=100, height=34, corner_radius=10,
+        ctk.CTkButton(bar, text="Search", width=90, height=34, corner_radius=10,
                       fg_color=theme.ACCENT_BLUE, hover_color=theme.ACCENT_BLUE_HOVER,
                       command=self._refresh_logs).grid(row=0, column=1, padx=(0, 6))
+        ctk.CTkButton(bar, text="⧉ Analysis Window", width=150, height=34, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=self._open_log_analysis).grid(row=0, column=2, padx=(0, 6))
+        ctk.CTkButton(bar, text="Log Destination", width=140, height=34, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=self._log_destination_dialog).grid(row=0, column=3, padx=(0, 6))
         ctk.CTkButton(bar, text="Add test log", width=110, height=34, corner_radius=10,
                       fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
-                      command=self._add_test_log).grid(row=0, column=2)
+                      command=self._add_test_log).grid(row=0, column=4)
 
         self.log_output = ctk.CTkTextbox(tab, fg_color=theme.BG_CONSOLE, corner_radius=12,
                                          text_color=theme.TEXT_SOFT, font=ctk.CTkFont(family="Consolas", size=12),
@@ -1137,6 +1143,14 @@ class SOCConsoleWindow(ctk.CTkToplevel):
             agent_id="local-console", source="manual-test", severity="info",
         )
         self._refresh_logs()
+
+    def _open_log_analysis(self):
+        _LogAnalysisWindow(self, self.app, self.db)
+
+    def _log_destination_dialog(self):
+        if not self.app.require("admin"):
+            return
+        _LogDestinationDialog(self, self.app, self.db)
 
     # ── Metrics ──────────────────────────────────────────────────────
 
@@ -1901,3 +1915,292 @@ class _AdminDialog(ctk.CTkToplevel):
         self.db.add_audit_event("role_changed", self.app.current_user.get("username", "admin"),
                                 f"{username} role set to {role}.")
         self._refresh_users()
+
+
+class _LogDestinationDialog(ctk.CTkToplevel):
+    """Choose where ingested logs are forwarded and how long they're kept.
+
+    The local database is always the primary store; this configures optional
+    fan-out to an external syslog/SIEM collector and/or a JSON-lines file, plus
+    a retention window for local purging. Applies live via reload_log_forwarder.
+    """
+
+    def __init__(self, master, app, db):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.title("Log Destination")
+        self.geometry("600x560")
+        self.configure(fg_color=theme.BG_PANEL)
+        self.attributes("-topmost", True)
+        self.transient(master)
+        apply_window_icon(self)
+
+        from autosoc.system.log_forwarder import SETTING_SYSLOG, SETTING_FILE, SETTING_RETENTION
+        self._keys = (SETTING_SYSLOG, SETTING_FILE, SETTING_RETENTION)
+
+        ctk.CTkLabel(self, text="Where do logs go?", text_color=theme.TEXT_PRIMARY,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(
+            self,
+            text=("Every ingested log is always stored locally and searchable here. In addition you "
+                  "can stream a copy to an external destination — a SIEM/syslog collector and/or a "
+                  "file archive — and set how long local logs are retained."),
+            text_color=theme.TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left", wraplength=540,
+        ).pack(anchor="w", padx=20, pady=(0, 12))
+
+        form = ctk.CTkFrame(self, fg_color="transparent")
+        form.pack(fill="x", padx=20)
+        form.grid_columnconfigure(1, weight=1)
+
+        self.syslog_entry = self._field(
+            form, 0, "Syslog / SIEM (UDP)", self.db.get_setting(SETTING_SYSLOG, ""),
+            placeholder="e.g. 10.0.0.20:514  (host or host:port)")
+        self.file_entry = self._field(
+            form, 1, "File archive (JSONL)", self.db.get_setting(SETTING_FILE, ""),
+            placeholder="e.g. /var/log/autosoc/ingested.jsonl")
+        self.retention_entry = self._field(
+            form, 2, "Retention (days)", str(self.db.get_setting(SETTING_RETENTION, "0") or "0"),
+            placeholder="0 = keep forever")
+
+        self.status = ctk.CTkLabel(self, text="", text_color=theme.TEXT_MUTED,
+                                   font=ctk.CTkFont(size=11), wraplength=540, justify="left")
+        self.status.pack(anchor="w", padx=20, pady=(10, 0))
+        self._show_status()
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=16)
+        ctk.CTkButton(row, text="Send test event", width=140, height=34, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self._send_test).pack(side="left")
+        ctk.CTkButton(row, text="Purge now", width=110, height=34, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self._purge_now).pack(side="left", padx=(8, 0))
+        ctk.CTkButton(row, text="Close", width=90, height=34, fg_color=theme.BTN_NEUTRAL,
+                      hover_color=theme.BTN_NEUTRAL_HOVER, command=self.destroy).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(row, text="Save", width=90, height=34, fg_color=theme.ACCENT_BLUE,
+                      hover_color=theme.ACCENT_BLUE_HOVER, command=self._save).pack(side="right")
+
+    def _field(self, form, row, label, value, placeholder=""):
+        ctk.CTkLabel(form, text=label, text_color=theme.TEXT_MUTED,
+                     font=ctk.CTkFont(size=12)).grid(row=row, column=0, sticky="w", pady=8, padx=(0, 10))
+        entry = ctk.CTkEntry(form, height=34, fg_color=theme.BG_FIELD, border_color=theme.FIELD_BORDER,
+                             placeholder_text=placeholder)
+        if value:
+            entry.insert(0, value)
+        entry.grid(row=row, column=1, sticky="ew", pady=8)
+        return entry
+
+    def _show_status(self):
+        fwd = self.app.log_forwarder()
+        st = fwd.status()
+        dests = []
+        if st["syslog"]:
+            dests.append(f"syslog → {st['syslog']}")
+        if st["file"]:
+            dests.append(f"file → {st['file']}")
+        text = ("Forwarding OFF (local storage only)." if not dests
+                else "Forwarding to: " + ", ".join(dests))
+        text += f"\nForwarded so far: {st['sent']} ok, {st['failed']} failed."
+        self.status.configure(text=text, text_color=theme.STATUS_GOOD if dests else theme.TEXT_MUTED)
+
+    def _save(self):
+        syslog_key, file_key, retention_key = self._keys
+        self.db.set_setting(syslog_key, self.syslog_entry.get().strip())
+        self.db.set_setting(file_key, self.file_entry.get().strip())
+        retention = self.retention_entry.get().strip() or "0"
+        if not retention.isdigit():
+            self.status.configure(text="Retention must be a whole number of days (0 = keep forever).",
+                                  text_color=theme.STATUS_ERROR)
+            return
+        self.db.set_setting(retention_key, retention)
+        self.app.reload_log_forwarder()
+        self.db.add_audit_event("log_destination_changed",
+                                self.app.current_user.get("username", "admin"),
+                                f"syslog={self.syslog_entry.get().strip() or '-'} "
+                                f"file={self.file_entry.get().strip() or '-'} retention={retention}d")
+        self._show_status()
+        self.status.configure(text=self.status.cget("text") + "\nSaved and applied.",
+                              text_color=theme.STATUS_GOOD)
+
+    def _send_test(self):
+        self._save()
+        self.app.log_forwarder().forward(
+            "AutoSOC test event — log destination check", agent_id="soc-console",
+            source="destination-test", severity="info")
+        self._show_status()
+
+    def _purge_now(self):
+        retention = (self.retention_entry.get().strip() or "0")
+        if not retention.isdigit() or int(retention) <= 0:
+            self.status.configure(text="Set a retention > 0 days before purging.", text_color=theme.STATUS_WARN)
+            return
+        removed = self.db.purge_logs_older_than(int(retention))
+        self.db.add_audit_event("logs_purged", self.app.current_user.get("username", "admin"),
+                                f"Purged {removed} logs older than {retention} days.")
+        self.status.configure(text=f"Purged {removed} log(s) older than {retention} days.",
+                              text_color=theme.STATUS_GOOD)
+
+
+class _LogAnalysisWindow(ctk.CTkToplevel):
+    """A focused log-analysis surface: filter by severity/agent/source/text,
+    see live aggregate stats, and export the current view."""
+
+    SEVERITY_CHOICES = ["(all)", "critical", "high", "warn", "error", "info", "debug"]
+
+    def __init__(self, master, app, db):
+        super().__init__(master)
+        self.app = app
+        self.db = db
+        self.title("Log Analysis")
+        self.geometry("1040x680")
+        self.configure(fg_color=theme.BG_MAIN if hasattr(theme, "BG_MAIN") else theme.BG_PANEL)
+        self.transient(master)
+        apply_window_icon(self)
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
+        # ── filter bar ──────────────────────────────────────────────
+        bar = ctk.CTkFrame(self, fg_color=theme.BG_PANEL, corner_radius=12)
+        bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        for col in range(8):
+            bar.grid_columnconfigure(col, weight=1 if col == 0 else 0)
+
+        self.text_filter = ctk.CTkEntry(bar, height=34, fg_color=theme.BG_FIELD, border_color=theme.FIELD_BORDER,
+                                        placeholder_text="Text (message / source / agent)…")
+        self.text_filter.grid(row=0, column=0, sticky="ew", padx=(10, 8), pady=10)
+        self.text_filter.bind("<Return>", lambda e: self.refresh())
+
+        self.severity_menu = ctk.CTkOptionMenu(bar, values=self.SEVERITY_CHOICES, width=110,
+                                               fg_color=theme.BG_CARD, button_color=theme.BTN_NEUTRAL,
+                                               button_hover_color=theme.BTN_NEUTRAL_HOVER)
+        self.severity_menu.set("(all)")
+        self.severity_menu.grid(row=0, column=1, padx=4, pady=10)
+
+        self.agent_menu = ctk.CTkOptionMenu(bar, values=["(all)"], width=150,
+                                            fg_color=theme.BG_CARD, button_color=theme.BTN_NEUTRAL,
+                                            button_hover_color=theme.BTN_NEUTRAL_HOVER)
+        self.agent_menu.set("(all)")
+        self.agent_menu.grid(row=0, column=2, padx=4, pady=10)
+
+        self.source_menu = ctk.CTkOptionMenu(bar, values=["(all)"], width=150,
+                                             fg_color=theme.BG_CARD, button_color=theme.BTN_NEUTRAL,
+                                             button_hover_color=theme.BTN_NEUTRAL_HOVER)
+        self.source_menu.set("(all)")
+        self.source_menu.grid(row=0, column=3, padx=4, pady=10)
+
+        ctk.CTkButton(bar, text="Apply", width=90, height=34, corner_radius=10,
+                      fg_color=theme.ACCENT_BLUE, hover_color=theme.ACCENT_BLUE_HOVER,
+                      command=self.refresh).grid(row=0, column=4, padx=4, pady=10)
+        ctk.CTkButton(bar, text="Export", width=90, height=34, corner_radius=10,
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.BTN_NEUTRAL_HOVER,
+                      command=self._export).grid(row=0, column=5, padx=4, pady=10)
+        self.auto_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(bar, text="Auto-refresh", variable=self.auto_var, onvalue=True, offvalue=False,
+                        command=self._toggle_auto).grid(row=0, column=6, padx=(4, 10), pady=10)
+
+        # ── stats strip ─────────────────────────────────────────────
+        self.stats = ctk.CTkLabel(self, text="", text_color=theme.TEXT_SOFT, font=ctk.CTkFont(size=12),
+                                  justify="left", anchor="w")
+        self.stats.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 4))
+
+        # ── results ─────────────────────────────────────────────────
+        self.output = ctk.CTkTextbox(self, fg_color=theme.BG_CONSOLE, corner_radius=12,
+                                     text_color=theme.TEXT_SOFT, font=ctk.CTkFont(family="Consolas", size=12),
+                                     wrap="none")
+        self.output.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        # Severity colour tags.
+        self.output.tag_config("critical", foreground=theme.STATUS_DANGER)
+        self.output.tag_config("high", foreground=theme.STATUS_ERROR)
+        self.output.tag_config("warn", foreground=theme.ACCENT_YELLOW)
+        self.output.tag_config("error", foreground=theme.STATUS_ERROR)
+
+        self._auto_job = None
+        self._reload_filter_options()
+        self.refresh()
+
+    def _reload_filter_options(self):
+        try:
+            agents = ["(all)"] + self.db.distinct_log_values("agent_id")
+            sources = ["(all)"] + self.db.distinct_log_values("source")
+        except Exception:
+            agents, sources = ["(all)"], ["(all)"]
+        self.agent_menu.configure(values=agents)
+        self.source_menu.configure(values=sources)
+
+    def _filters(self):
+        sev = self.severity_menu.get()
+        agent = self.agent_menu.get()
+        source = self.source_menu.get()
+        return {
+            "text": self.text_filter.get().strip(),
+            "severity": "" if sev == "(all)" else sev,
+            "agent_id": "" if agent == "(all)" else agent,
+            "source": "" if source == "(all)" else source,
+        }
+
+    def refresh(self):
+        filters = self._filters()
+        rows = self.db.query_logs(limit=1000, **filters)
+        self.output.configure(state="normal")
+        self.output.delete("0.0", "end")
+        if not rows:
+            self.output.insert("end", "No logs match these filters.\n")
+        else:
+            for created_at, agent_id, source, severity, message in rows:
+                line = f"{created_at} | {str(severity):<8} | {agent_id or '-':<18} | {source or '-':<16} | {message}\n"
+                tag = str(severity).lower()
+                self.output.insert("end", line, tag if tag in ("critical", "high", "warn", "error") else ())
+        self.output.configure(state="disabled")
+        self._render_stats()
+
+    def _render_stats(self):
+        stats = self.db.log_stats()
+        sev = stats["by_severity"]
+        sev_str = "  ".join(f"{k}:{v}" for k, v in sorted(sev.items(), key=lambda kv: -kv[1]))
+        top_src = ", ".join(f"{name}({n})" for name, n in stats["top_sources"][:5]) or "—"
+        top_agents = ", ".join(f"{name}({n})" for name, n in stats["top_agents"][:5]) or "—"
+        self.stats.configure(
+            text=(f"Total stored: {stats['total']}   ·   sampled: {stats['sampled']}   ·   "
+                  f"by severity → {sev_str or '—'}\n"
+                  f"top sources: {top_src}   ·   top agents: {top_agents}"))
+
+    def _toggle_auto(self):
+        if self.auto_var.get():
+            self._schedule_auto()
+        elif self._auto_job is not None:
+            self.after_cancel(self._auto_job)
+            self._auto_job = None
+
+    def _schedule_auto(self):
+        self.refresh()
+        self._reload_filter_options()
+        self._auto_job = self.after(5000, self._schedule_auto)
+
+    def _export(self):
+        from tkinter import filedialog
+
+        rows = self.db.query_logs(limit=5000, **self._filters())
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Export logs", defaultextension=".log",
+            initialfile="autosoc_logs.log",
+            filetypes=[("Log/CSV text", "*.log *.csv *.txt"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("created_at,agent_id,source,severity,message\n")
+                for created_at, agent_id, source, severity, message in rows:
+                    safe = str(message).replace('"', "'")
+                    handle.write(f'{created_at},{agent_id},{source},{severity},"{safe}"\n')
+            _InfoDialog(self, "Export", f"Exported {len(rows)} log line(s) to:\n\n{path}")
+        except OSError as exc:
+            _InfoDialog(self, "Export failed", str(exc))
+
+    def destroy(self):
+        if self._auto_job is not None:
+            try:
+                self.after_cancel(self._auto_job)
+            except Exception:
+                pass
+            self._auto_job = None
+        super().destroy()

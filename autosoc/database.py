@@ -998,6 +998,104 @@ class SOCDatabase:
                 )
             return cursor.fetchall()
 
+    def query_logs(self, text="", severity="", agent_id="", source="", limit=500):
+        """Filtered log query for the Log Analysis window. Any empty filter is
+        ignored; all supplied filters are AND-combined."""
+        clauses, params = [], []
+        text = (text or "").strip()
+        if text:
+            like = f"%{text}%"
+            clauses.append("(message LIKE ? OR source LIKE ? OR agent_id LIKE ?)")
+            params.extend([like, like, like])
+        if severity:
+            clauses.append("severity = ?")
+            params.append(str(severity))
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(str(agent_id))
+        if source:
+            clauses.append("source = ?")
+            params.append(str(source))
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(int(limit))
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                f"""SELECT created_at, agent_id, source, severity, message
+                    FROM ingested_logs {where} ORDER BY id DESC LIMIT ?""",
+                params,
+            )
+            return cursor.fetchall()
+
+    def log_stats(self, window=5000):
+        """Quick aggregates over the most recent ``window`` logs for the
+        analysis dashboard: total, counts by severity, top sources, top agents."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT severity, source, agent_id FROM ingested_logs ORDER BY id DESC LIMIT ?",
+                (int(window),),
+            )
+            rows = cursor.fetchall()
+            cursor.execute("SELECT COUNT(*) FROM ingested_logs")
+            grand_total = cursor.fetchone()[0]
+        by_severity, by_source, by_agent = {}, {}, {}
+        for severity, source, agent_id in rows:
+            by_severity[severity or "info"] = by_severity.get(severity or "info", 0) + 1
+            if source:
+                by_source[source] = by_source.get(source, 0) + 1
+            if agent_id:
+                by_agent[agent_id] = by_agent.get(agent_id, 0) + 1
+        top = lambda d, n=8: sorted(d.items(), key=lambda kv: -kv[1])[:n]
+        return {
+            "sampled": len(rows),
+            "total": grand_total,
+            "by_severity": by_severity,
+            "top_sources": top(by_source),
+            "top_agents": top(by_agent),
+        }
+
+    def distinct_log_values(self, column, limit=200):
+        """Distinct non-empty values of 'source' or 'agent_id' for filter menus."""
+        if column not in ("source", "agent_id"):
+            raise ValueError("distinct_log_values only supports 'source' or 'agent_id'")
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                f"""SELECT DISTINCT {column} FROM ingested_logs
+                    WHERE {column} <> '' ORDER BY {column} LIMIT ?""",
+                (int(limit),),
+            )
+            return [r[0] for r in cursor.fetchall()]
+
+    def purge_logs_older_than(self, days):
+        """Data-retention control: delete ingested logs older than ``days``.
+        Returns the number of rows removed. days<=0 is a no-op (keep forever).
+
+        created_at is stored as day-first "%d.%m.%Y %H:%M:%S" (see _now), which
+        is NOT lexically sortable, so we parse each timestamp and compare as a
+        datetime rather than doing a string comparison in SQL."""
+        if not days or int(days) <= 0:
+            return 0
+        from datetime import datetime, timedelta
+
+        cutoff = datetime.now() - timedelta(days=int(days))
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT id, created_at FROM ingested_logs")
+            stale = []
+            for row_id, created_at in cursor.fetchall():
+                try:
+                    when = datetime.strptime(created_at, "%d.%m.%Y %H:%M:%S")
+                except (ValueError, TypeError):
+                    continue  # unparseable timestamp → leave it alone
+                if when < cutoff:
+                    stale.append(row_id)
+            for row_id in stale:
+                cursor.execute("DELETE FROM ingested_logs WHERE id = ?", (row_id,))
+            self.conn.commit()
+            return len(stale)
+
     def count_rows(self, table):
         allowed = {"incidents", "iocs", "agents", "ingested_logs", "security_events", "scans", "users"}
         if table not in allowed:
