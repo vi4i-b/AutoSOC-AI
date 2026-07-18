@@ -22,6 +22,7 @@ from datetime import datetime
 
 import customtkinter as ctk
 
+from autosoc.agents.server import install_commands
 from autosoc.logging_setup import get_logger
 from autosoc.ui import theme
 from autosoc.ui.theme import apply_window_icon
@@ -587,7 +588,7 @@ class SOCConsoleWindow(ctk.CTkToplevel):
                       border_width=1, border_color=theme.BTN_OUTLINE_BORDER,
                       command=self._regenerate_token).pack(side="left")
 
-        self.install_box = ctk.CTkTextbox(collector, height=64, fg_color=theme.BG_CONSOLE, corner_radius=10,
+        self.install_box = ctk.CTkTextbox(collector, height=124, fg_color=theme.BG_CONSOLE, corner_radius=10,
                                           text_color=theme.ACCENT_CYAN, font=ctk.CTkFont(family="Consolas", size=11),
                                           wrap="word")
         self.install_box.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
@@ -643,9 +644,10 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self._refresh_network_panel()
 
     def _install_command(self):
+        """Return the per-OS onboarding commands (dict: linux / windows_python / windows_exe)."""
         url = self.app.collector_lan_url()
         token = self.app.collector_token()
-        return f"curl -fsSL {url}/agent | sudo python3 - --server {url} --token {token}"
+        return install_commands(url, token)
 
     def _refresh_collector_panel(self):
         if not hasattr(self, "collector_status"):
@@ -663,9 +665,13 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         self.install_box.configure(state="normal")
         self.install_box.delete("0.0", "end")
         if running:
-            self.install_box.insert("end", self._install_command())
+            cmds = self._install_command()
+            self.install_box.insert("end", "# Linux (sudo for full log access)\n")
+            self.install_box.insert("end", cmds["linux"] + "\n\n")
+            self.install_box.insert("end", "# Windows — elevated PowerShell (needs Python 3)\n")
+            self.install_box.insert("end", cmds["windows_python"])
         else:
-            self.install_box.insert("end", "Start the collector to reveal the one-line install command.")
+            self.install_box.insert("end", "Start the collector to reveal the one-line install commands.")
         self.install_box.configure(state="disabled")
 
     def _toggle_collector(self):
@@ -682,15 +688,25 @@ class SOCConsoleWindow(ctk.CTkToplevel):
         if not self.app.collector_running():
             _InfoDialog(self, "Collector", "Start the collector first.")
             return
-        command = self._install_command()
+        cmds = self._install_command()
+        # Copy the Linux one-liner by default; the dialog lists both OSes so the
+        # analyst can grab whichever they need.
         try:
             self.clipboard_clear()
-            self.clipboard_append(command)
+            self.clipboard_append(cmds["linux"])
         except Exception:
             pass
-        _InfoDialog(self, "Install Command",
-                    "Run this on the target server (copied to clipboard):\n\n" + command +
-                    "\n\nTip: run with sudo so the agent can read system logs like /var/log/auth.log.")
+        _InfoDialog(
+            self, "Install Command",
+            "Run on the target endpoint with the ingestion token.\n"
+            "The Linux command is on your clipboard.\n\n"
+            "▸ LINUX (terminal, use sudo for /var/log access):\n"
+            f"{cmds['linux']}\n\n"
+            "▸ WINDOWS (elevated PowerShell, Python 3 required — reads the\n"
+            "  Security/System/Application event logs):\n"
+            f"{cmds['windows_python']}\n\n"
+            "▸ WINDOWS without Python (only if a prebuilt agent .exe is bundled):\n"
+            f"{cmds['windows_exe']}")
 
     def _show_token(self):
         _InfoDialog(self, "Ingestion Token",

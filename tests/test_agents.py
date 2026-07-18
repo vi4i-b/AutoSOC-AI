@@ -129,6 +129,23 @@ class CollectorServerTests(unittest.TestCase):
         status, _ = self._post("/api/v1/report", {"hostname": "x"}, token=self.token)
         self.assertEqual(status, 400)
 
+    def test_landing_page_shows_both_os_commands(self):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/", timeout=5) as resp:
+            body = resp.read().decode()
+        self.assertIn("Linux", body)
+        self.assertIn("Windows", body)
+        self.assertIn("sudo python3", body)   # linux one-liner
+        self.assertIn("iwr", body)            # windows powershell one-liner
+
+    def test_agent_exe_route_graceful_404_when_not_bundled(self):
+        # No prebuilt exe on this checkout → 404 with build guidance, not a crash.
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{self.port}/agent.exe", timeout=5)
+            self.fail("expected 404 for a missing prebuilt agent.exe")
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(exc.code, 404)
+            self.assertIn("Python 3", exc.read().decode())
+
     def _get(self, path, token=None):
         url = f"http://127.0.0.1:{self.port}{path}"
         req = urllib.request.Request(url, method="GET")
@@ -163,6 +180,23 @@ class CollectorServerTests(unittest.TestCase):
                    token=self.token)
         agent = [a for a in self.db.list_agents() if a["agent_id"] == "agent_c"][0]
         self.assertEqual(agent["isolated"], 1)
+
+
+class InstallCommandTests(unittest.TestCase):
+    def test_per_os_commands(self):
+        from autosoc.agents.server import install_commands
+        cmds = install_commands("http://10.0.0.5:8787", "TOK")
+        self.assertTrue(cmds["linux"].startswith("curl -fsSL http://10.0.0.5:8787/agent | sudo python3 -"))
+        self.assertIn("--token TOK", cmds["linux"])
+        self.assertIn("iwr http://10.0.0.5:8787/agent -OutFile", cmds["windows_python"])
+        self.assertIn("python $env:TEMP\\autosoc_agent.py", cmds["windows_python"])
+        self.assertIn("/agent.exe", cmds["windows_exe"])
+
+    def test_trailing_slash_normalized(self):
+        from autosoc.agents.server import install_commands
+        cmds = install_commands("http://host:8787/", "T")
+        self.assertNotIn("//agent", cmds["linux"])
+        self.assertNotIn("8787//", cmds["windows_python"])
 
 
 class AgentIsolationTests(unittest.TestCase):
@@ -243,6 +277,43 @@ class AgentModuleTests(unittest.TestCase):
         result = self.agent.recent_auth_failures()
         self.assertIn("count", result)
         self.assertIsInstance(result["top_sources"], list)
+
+    def test_windows_event_tailer_noop_off_windows(self):
+        # On this Linux CI host the Windows tailer must yield nothing, never raise.
+        tailer = self.agent.WindowsEventTailer(self.agent.DEFAULT_WIN_CHANNELS)
+        self.assertEqual(tailer.read_new(), [])
+
+    def test_parse_wevtutil_xml_failed_logon(self):
+        sample = (
+            "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'>"
+            "<System><Provider Name='Microsoft-Windows-Security-Auditing'/>"
+            "<EventID>4625</EventID><Level>0</Level>"
+            "<TimeCreated SystemTime='2026-07-18T09:15:03Z'/>"
+            "<EventRecordID>204815</EventRecordID><Channel>Security</Channel></System>"
+            "<EventData><Data Name='TargetUserName'>administrator</Data>"
+            "<Data Name='IpAddress'>45.66.77.88</Data></EventData></Event>"
+        )
+        events = self.agent._parse_wevtutil_xml(sample)
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertEqual(event["event_id"], "4625")
+        self.assertEqual(event["severity"], "warn")           # named security event
+        self.assertEqual(event["record_id"], 204815)
+        self.assertIn("Failed logon", event["message"])       # friendly label
+        self.assertIn("45.66.77.88", event["message"])        # source IP preserved
+
+    def test_parse_wevtutil_xml_level_fallback(self):
+        # An unrecognized event id falls back to the Windows Level → severity map.
+        sample = (
+            "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'>"
+            "<System><EventID>7045</EventID><Level>2</Level>"
+            "<EventRecordID>5</EventRecordID></System></Event>"
+        )
+        events = self.agent._parse_wevtutil_xml(sample)
+        self.assertEqual(events[0]["severity"], "warn")       # Level 2 = Error → warn
+
+    def test_parse_wevtutil_xml_bad_input(self):
+        self.assertEqual(self.agent._parse_wevtutil_xml("not xml at all"), [])
 
 
 if __name__ == "__main__":

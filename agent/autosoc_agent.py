@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
-"""AutoSOC endpoint agent — standalone, stdlib only.
+"""AutoSOC endpoint agent — standalone, stdlib only. Linux + Windows.
 
 Copy this file to any server (or let the AutoSOC collector serve it over
 ``GET /agent``) and run one command. It enrolls with the collector, then
 periodically reports host telemetry (hostname, OS, local IPs, uptime, running
 processes) and ships new log lines.
 
-Usage:
-    python3 autosoc_agent.py --server http://<collector-ip>:8787 --token <TOKEN>
+Usage (Linux):
+    sudo python3 autosoc_agent.py --server http://<collector-ip>:8787 --token <TOKEN>
+
+Usage (Windows, elevated PowerShell):
+    python autosoc_agent.py --server http://<collector-ip>:8787 --token <TOKEN>
 
 Common flags:
     --interval N        seconds between reports (default 30)
     --once              collect and send a single report, then exit
     --log-file PATH     extra log file(s) to ship (repeatable)
+    --win-channel NAME  extra Windows event channel to ship (repeatable)
     --name NAME         override the reported hostname
     --agent-id ID       override the stable agent id
 
 Notes:
- - Only the standard library is used, so any Python 3.6+ works.
- - Reading system logs (e.g. /var/log/auth.log) usually needs root; run with
-   sudo for full log visibility. Without it, the agent still reports host
-   telemetry and skips unreadable files.
+ - Only the standard library is used, so any Python 3.6+ works on either OS.
+ - Log sources are OS-aware:
+     * Linux  — tails /var/log/auth.log, /var/log/secure, /var/log/syslog
+                (reading these usually needs root; run with sudo).
+     * Windows — reads the Security, System and Application event logs via the
+                built-in ``wevtutil`` (the Security channel needs an elevated
+                / Administrator shell). Only events newer than the last cycle
+                are shipped, tracked by EventRecordID.
  - The transport is plain HTTP with a bearer token — intended for a trusted
    LAN or behind a TLS reverse proxy.
 """
@@ -42,12 +50,36 @@ from datetime import datetime, timezone
 
 _IPV4_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b")
 _SS_PROC_RE = re.compile(r'\("([^"]+)",pid=(\d+)')
+# A pre-matched empty pattern so callers can do `(search(...) or _NULL_MATCH).group(0)`
+# and uniformly get "" when there's no hit, without a branch.
+_NULL_MATCH = re.compile("").match("")
 
 DEFAULT_INTERVAL = 30
 DEFAULT_LOG_FILES = ["/var/log/auth.log", "/var/log/secure", "/var/log/syslog"]
+# Windows event channels shipped by default. Security carries logon/account
+# events (needs an elevated shell); System/Application carry service + app faults.
+DEFAULT_WIN_CHANNELS = ["Security", "System", "Application"]
 FIRST_READ_TAIL_LINES = 50
 MAX_LINES_PER_FILE = 200
+WIN_EVENTS_FIRST_READ = 30
+WIN_EVENTS_PER_CYCLE = 120
 HTTP_TIMEOUT = 15
+
+# Windows Security event IDs worth calling out by name in the shipped message,
+# and the severity they map to. Everything else falls back to the event Level.
+WIN_SECURITY_EVENTS = {
+    "4625": ("warn", "Failed logon"),
+    "4740": ("warn", "Account locked out"),
+    "4720": ("warn", "User account created"),
+    "4726": ("warn", "User account deleted"),
+    "4728": ("warn", "Member added to security-enabled global group"),
+    "4732": ("warn", "Member added to security-enabled local group"),
+    "4756": ("warn", "Member added to security-enabled universal group"),
+    "4672": ("info", "Special privileges assigned to new logon"),
+    "4688": ("info", "New process created"),
+    "1102": ("critical", "Audit log cleared"),
+    "4724": ("warn", "Password reset attempt"),
+}
 
 
 # ── host identity ────────────────────────────────────────────────────
@@ -196,9 +228,159 @@ def _guess_severity(line):
     return "info"
 
 
+# ── windows event log ────────────────────────────────────────────────
+
+# Windows event Level → our severity. Level 1=Critical 2=Error 3=Warning
+# 4=Information 5=Verbose (0 often means "not set", treat as info).
+_WIN_LEVEL_SEVERITY = {"1": "critical", "2": "warn", "3": "warn", "4": "info", "5": "info", "0": "info"}
+
+
+class WindowsEventTailer:
+    """Ships new Windows event-log records via the built-in ``wevtutil``.
+
+    Per channel we remember the highest EventRecordID already sent and, each
+    cycle, query only records newer than it (``EventRecordID > N``) — the
+    Windows equivalent of the file tailer's byte offset. stdlib only:
+    ``wevtutil`` ships with every Windows, and parsing uses ``xml.etree``.
+    """
+
+    def __init__(self, channels):
+        self.channels = list(channels)
+        self.last_record = {}  # channel -> highest EventRecordID shipped
+        self._first_pass = set()
+
+    def read_new(self):
+        if os.name != "nt":
+            return []
+        entries = []
+        for channel in self.channels:
+            entries.extend(self._read_channel(channel))
+        return entries
+
+    def _read_channel(self, channel):
+        first = channel not in self._first_pass
+        self._first_pass.add(channel)
+        last = self.last_record.get(channel, 0)
+
+        if first:
+            # Seed from the most recent events so we don't flood on startup.
+            query = ["wevtutil", "qe", channel, "/c:%d" % WIN_EVENTS_FIRST_READ,
+                     "/rd:true", "/f:xml"]
+        else:
+            xpath = "*[System[EventRecordID>%d]]" % last
+            query = ["wevtutil", "qe", channel, "/q:%s" % xpath,
+                     "/c:%d" % WIN_EVENTS_PER_CYCLE, "/rd:true", "/f:xml"]
+
+        raw = _run(query)
+        if not raw:
+            return []
+
+        events = _parse_wevtutil_xml(raw)
+        entries = []
+        highest = last
+        for event in events:
+            record_id = event["record_id"]
+            if record_id > highest:
+                highest = record_id
+            if not first and record_id <= last:
+                continue
+            entries.append({
+                "source": "WinEventLog:%s" % channel,
+                "severity": event["severity"],
+                "message": event["message"],
+            })
+        if highest > last:
+            self.last_record[channel] = highest
+        # Oldest-first so the console shows them in natural order.
+        entries.reverse()
+        return entries[-MAX_LINES_PER_FILE:]
+
+
+def _parse_wevtutil_xml(raw):
+    """Parse concatenated <Event>…</Event> blocks from ``wevtutil … /f:xml``."""
+    import xml.etree.ElementTree as ET
+
+    # wevtutil emits a stream of <Event> elements with no single root; wrap them.
+    wrapped = "<Events>%s</Events>" % raw
+    try:
+        root = ET.fromstring(wrapped)
+    except ET.ParseError:
+        return []
+
+    ns = "{http://schemas.microsoft.com/win/2004/08/events/event}"
+    parsed = []
+    for event in root.findall("%sEvent" % ns):
+        system = event.find("%sSystem" % ns)
+        if system is None:
+            continue
+
+        def _text(tag):
+            node = system.find(ns + tag)
+            return node.text if node is not None and node.text else ""
+
+        try:
+            record_id = int(_text("EventRecordID") or 0)
+        except ValueError:
+            record_id = 0
+        event_id = ""
+        eid_node = system.find("%sEventID" % ns)
+        if eid_node is not None and eid_node.text:
+            event_id = eid_node.text.strip()
+        level = _text("Level") or "0"
+        provider = ""
+        prov_node = system.find("%sProvider" % ns)
+        if prov_node is not None:
+            provider = prov_node.get("Name", "")
+        created = ""
+        time_node = system.find("%sTimeCreated" % ns)
+        if time_node is not None:
+            created = time_node.get("SystemTime", "")
+
+        # Prefer a named security event; otherwise fall back to the Level.
+        severity, label = WIN_SECURITY_EVENTS.get(event_id, (None, ""))
+        if severity is None:
+            severity = _WIN_LEVEL_SEVERITY.get(level, "info")
+
+        # Flatten EventData/UserData name=value pairs for a readable line.
+        details = []
+        for container in ("EventData", "UserData"):
+            data = event.find(ns + container)
+            if data is None:
+                continue
+            for child in data.iter():
+                tag = child.tag.replace(ns, "")
+                if tag in ("EventData", "UserData"):
+                    continue
+                name = child.get("Name", tag)
+                value = (child.text or "").strip()
+                if value and name not in ("", None):
+                    details.append("%s=%s" % (name, value))
+
+        head = "EventID %s" % event_id
+        if label:
+            head += " (%s)" % label
+        if provider:
+            head += " [%s]" % provider
+        detail_str = " ".join(details[:12])
+        message = ("%s %s" % (head, detail_str)).strip()
+        if created:
+            message = "%s | %s" % (created, message)
+
+        parsed.append({"record_id": record_id, "event_id": event_id,
+                       "severity": severity, "message": message[:2000]})
+    return parsed
+
+
 # ── telemetry ────────────────────────────────────────────────────────
 
 def uptime_seconds():
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            return int(ctypes.windll.kernel32.GetTickCount64() // 1000)
+        except (OSError, AttributeError, ValueError):
+            return None
     try:
         with open("/proc/uptime", "r", encoding="utf-8") as handle:
             return int(float(handle.read().split()[0]))
@@ -227,6 +409,8 @@ def os_pretty_name():
 def resources():
     """CPU/memory/disk/load — quick health context for the analyst."""
     data = {"cpu_count": os.cpu_count()}
+    if os.name == "nt":
+        return _windows_resources(data)
     try:
         with open("/proc/loadavg", "r", encoding="utf-8") as handle:
             data["load_avg"] = handle.read().split()[:3]
@@ -245,13 +429,54 @@ def resources():
             data["mem_used_mb"] = total - avail
     except (OSError, ValueError, IndexError):
         pass
-    out = _run(["df", "-Pm", "/"])
-    if out:
-        rows = out.strip().splitlines()
-        if len(rows) >= 2:
-            cols = rows[1].split()
-            if len(cols) >= 5:
-                data["disk_root"] = {"size_mb": cols[1], "used_mb": cols[2], "use_pct": cols[4]}
+    _disk_root(data, "/")
+    return data
+
+
+def _disk_root(data, path):
+    """Fill data['disk_root'] using shutil (cross-platform, stdlib)."""
+    try:
+        import shutil
+
+        usage = shutil.disk_usage(path)
+        data["disk_root"] = {
+            "size_mb": str(usage.total // (1024 * 1024)),
+            "used_mb": str(usage.used // (1024 * 1024)),
+            "use_pct": "%d%%" % (round(100 * usage.used / usage.total) if usage.total else 0),
+        }
+    except (OSError, ValueError, ImportError):
+        pass
+
+
+def _windows_resources(data):
+    """Windows memory via GlobalMemoryStatusEx (ctypes) + disk via shutil."""
+    try:
+        import ctypes
+
+        class _MemStatus(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = _MemStatus()
+        status.dwLength = ctypes.sizeof(_MemStatus)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            total = status.ullTotalPhys // (1024 * 1024)
+            avail = status.ullAvailPhys // (1024 * 1024)
+            data["mem_total_mb"] = total
+            data["mem_used_mb"] = total - avail
+            data["mem_load_pct"] = status.dwMemoryLoad
+    except (OSError, AttributeError, ValueError):
+        pass
+    _disk_root(data, os.environ.get("SystemDrive", "C:") + "\\")
     return data
 
 
@@ -327,6 +552,8 @@ def _windows_sockets(limit):
 
 def recent_auth_failures(limit_lines=3000):
     """Quick count + top source IPs of failed logins from the local auth log."""
+    if os.name == "nt":
+        return _windows_auth_failures()
     result = {"count": 0, "top_sources": []}
     for path in ("/var/log/auth.log", "/var/log/secure"):
         if not os.path.isfile(path):
@@ -348,6 +575,30 @@ def recent_auth_failures(limit_lines=3000):
         top = sorted(counts.items(), key=lambda item: -item[1])[:8]
         result = {"count": total, "top_sources": [{"ip": ip, "count": c} for ip, c in top]}
         break
+    return result
+
+
+def _windows_auth_failures():
+    """Count failed logons (Security event 4625) and their top source IPs."""
+    result = {"count": 0, "top_sources": []}
+    out = _run(["wevtutil", "qe", "Security", "/q:*[System[(EventID=4625)]]",
+                "/c:400", "/rd:true", "/f:text"])
+    if not out:
+        return result
+    counts = {}
+    total = 0
+    for block in out.split("Event["):
+        if "4625" not in block:
+            continue
+        total += 1
+        # The failed-logon event records the origin under "Source Network Address";
+        # fall back to any IPv4 in the block if that label isn't present.
+        labelled = re.search(r"Source Network Address:\s*([0-9a-fA-F:.]+)", block)
+        ip = labelled.group(1) if labelled else (_IPV4_RE.search(block) or _NULL_MATCH).group(0)
+        if ip and ip not in ("-", "::1", "127.0.0.1"):
+            counts[ip] = counts.get(ip, 0) + 1
+    top = sorted(counts.items(), key=lambda item: -item[1])[:8]
+    result = {"count": total, "top_sources": [{"ip": ip, "count": c} for ip, c in top]}
     return result
 
 
@@ -533,6 +784,8 @@ def run(args):
     hostname = args.name or socket.gethostname()
     system = platform.system()
     tailer = LogTailer(DEFAULT_LOG_FILES + list(args.log_file or []))
+    # Windows: ship event-log records too (no-op on other OSes).
+    win_tailer = WindowsEventTailer((args.win_channel or []) or DEFAULT_WIN_CHANNELS)
 
     print(f"[autosoc-agent] id={agent_id} host={hostname} -> {args.server}")
     ok, result = post(args.server, "/api/v1/enroll", args.token, {
@@ -547,7 +800,7 @@ def run(args):
 
     while True:
         telemetry = collect_telemetry()
-        logs = tailer.read_new()
+        logs = tailer.read_new() + win_tailer.read_new()
         ok, result = post(args.server, "/api/v1/report", args.token, {
             "agent_id": agent_id,
             "hostname": hostname,
@@ -582,6 +835,9 @@ def build_parser():
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL, help="Seconds between reports")
     parser.add_argument("--once", action="store_true", help="Send a single report and exit")
     parser.add_argument("--log-file", action="append", help="Extra log file to ship (repeatable)")
+    parser.add_argument("--win-channel", action="append",
+                        help="Extra Windows event channel to ship, e.g. "
+                             "'Microsoft-Windows-Windows Defender/Operational' (repeatable)")
     parser.add_argument("--name", help="Override the reported hostname")
     parser.add_argument("--agent-id", help="Override the stable agent id")
     return parser

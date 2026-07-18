@@ -35,6 +35,36 @@ def agent_script_path() -> str:
     return os.path.join(project_root(), "agent", "autosoc_agent.py")
 
 
+def agent_exe_path() -> str:
+    """A prebuilt standalone Windows agent, if one was produced by the Windows
+    CI build (agent/dist/autosoc-agent.exe). Endpoints without Python installed
+    can run this instead of the .py script."""
+    return os.path.join(project_root(), "agent", "dist", "autosoc-agent.exe")
+
+
+def install_commands(base_url: str, token: str) -> dict:
+    """One-line onboarding commands per OS. Kept here so the collector landing
+    page and the SOC console show byte-for-byte the same thing.
+
+    - Linux: pipe the script straight into python3 under sudo (for log access).
+    - Windows (Python present): download the script, run it from an elevated
+      PowerShell so the Security event log is readable.
+    - Windows (no Python): download the prebuilt agent .exe and run it — only
+      offered when that binary is actually being served (see /agent.exe).
+    """
+    url = base_url.rstrip("/")
+    return {
+        "linux": (f"curl -fsSL {url}/agent | sudo python3 - "
+                  f"--server {url} --token {token}"),
+        "windows_python": (
+            f"iwr {url}/agent -OutFile $env:TEMP\\autosoc_agent.py; "
+            f"python $env:TEMP\\autosoc_agent.py --server {url} --token {token}"),
+        "windows_exe": (
+            f"iwr {url}/agent.exe -OutFile $env:TEMP\\autosoc-agent.exe; "
+            f"& $env:TEMP\\autosoc-agent.exe --server {url} --token {token}"),
+    }
+
+
 class _CollectorHandler(BaseHTTPRequestHandler):
     server_version = "AutoSOC-Collector/1.0"
 
@@ -92,6 +122,9 @@ class _CollectorHandler(BaseHTTPRequestHandler):
         if path in ("/agent", "/install", "/autosoc_agent.py"):
             self._serve_agent_script()
             return
+        if path in ("/agent.exe", "/autosoc-agent.exe"):
+            self._serve_agent_exe()
+            return
         if path in ("/blocklist.txt", "/blocklist"):
             self._serve_blocklist()
             return
@@ -110,6 +143,11 @@ class _CollectorHandler(BaseHTTPRequestHandler):
     def _serve_landing(self):
         """Human-friendly page so a browser hitting the root isn't confused."""
         host = self.headers.get("Host", "this-host:8787")
+        cmds = install_commands(f"http://{host}", "&lt;ingestion-token&gt;")
+        exe_note = ""
+        if self._windows_agent_available():
+            exe_note = (f'<p class="muted">Windows without Python installed '
+                        f'(elevated PowerShell):</p>\n<pre>{cmds["windows_exe"]}</pre>')
         page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -117,11 +155,12 @@ class _CollectorHandler(BaseHTTPRequestHandler):
 <style>
  body{{background:#07111b;color:#dbe8f4;font-family:system-ui,Segoe UI,Arial,sans-serif;
       margin:0;padding:48px;line-height:1.5}}
- .card{{max-width:720px;margin:0 auto;background:#0b1623;border:1px solid #1d3347;
+ .card{{max-width:760px;margin:0 auto;background:#0b1623;border:1px solid #1d3347;
         border-radius:16px;padding:28px 32px}}
- h1{{margin:0 0 4px;font-size:24px}} .muted{{color:#87a5c0}}
+ h1{{margin:0 0 4px;font-size:24px}} h3{{margin:18px 0 4px;font-size:14px;color:#9fc0dc}}
+ .muted{{color:#87a5c0}} .os{{color:#5dd39e;font-weight:bold}}
  code,pre{{background:#08111b;border:1px solid #1f3449;border-radius:8px;color:#77beff}}
- code{{padding:2px 6px}} pre{{padding:14px;overflow:auto}}
+ code{{padding:2px 6px}} pre{{padding:14px;overflow:auto;white-space:pre-wrap}}
  a{{color:#77beff}} .ok{{color:#5dd39e}} table{{border-collapse:collapse;margin:12px 0}}
  td{{padding:6px 14px 6px 0;vertical-align:top}}
 </style></head><body><div class="card">
@@ -129,12 +168,16 @@ class _CollectorHandler(BaseHTTPRequestHandler):
 <p class="muted">Endpoint log &amp; telemetry ingestion service. This is an API, not a website.</p>
 <table>
 <tr><td><a href="/api/v1/ping">/api/v1/ping</a></td><td class="muted">health check</td></tr>
-<tr><td><a href="/agent">/agent</a></td><td class="muted">the endpoint agent script</td></tr>
+<tr><td><a href="/agent">/agent</a></td><td class="muted">the endpoint agent script (Python)</td></tr>
+<tr><td><a href="/agent.exe">/agent.exe</a></td><td class="muted">prebuilt Windows agent binary (if bundled)</td></tr>
 <tr><td><a href="/blocklist.txt">/blocklist.txt</a></td><td class="muted">firewall block-list feed (FortiGate Threat Feed / Palo Alto EDL)</td></tr>
 </table>
-<p class="muted">Onboard a server (run on the target, needs your ingestion token):</p>
-<pre>curl -fsSL http://{host}/agent | sudo python3 - \\
-  --server http://{host} --token &lt;ingestion-token&gt;</pre>
+<p class="muted">Onboard a server — run on the target with your ingestion token:</p>
+<h3><span class="os">Linux</span> (terminal, sudo for full log access)</h3>
+<pre>{cmds["linux"]}</pre>
+<h3><span class="os">Windows</span> (elevated PowerShell, needs Python 3)</h3>
+<pre>{cmds["windows_python"]}</pre>
+{exe_note}
 <p class="muted">Get the token from the AutoSOC app: SOC Console &rarr; Endpoints &amp; Agents.</p>
 </div></body></html>"""
         body = page.encode("utf-8")
@@ -156,6 +199,27 @@ class _CollectorHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _serve_agent_exe(self):
+        """Serve the prebuilt Windows agent binary if the CI build produced one."""
+        try:
+            with open(agent_exe_path(), "rb") as handle:
+                body = handle.read()
+        except OSError:
+            self._send_json(404, {"ok": False, "error": (
+                "Prebuilt Windows agent not bundled on this server. Either install "
+                "Python 3 on the endpoint and use the /agent (script) command, or build "
+                "agent/dist/autosoc-agent.exe via scripts/build_windows.bat and restart.")})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Disposition", "attachment; filename=autosoc-agent.exe")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _windows_agent_available(self) -> bool:
+        return os.path.isfile(agent_exe_path())
 
     # ── POST ─────────────────────────────────────────────────────────
 
