@@ -4,7 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="AutoSOC — serverlərinizi və şəbəkə infrastrukturunuzu qoruyan güclü, yüngül və çarpaz-platforma Təhlükəsizlik Əməliyyatları Mərkəzi (SOC). Real vaxtda aşkarlama, təhlil və avtomatik reaksiya." />
-  <meta name="theme-color" content="#05070d" />
+  <meta name="theme-color" content="#050f0a" />
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="apple-touch-icon" href="autosoc_logo.png" />
   <title>AutoSOC — Avtonom Təhlükəsizlik Əməliyyatları Mərkəzi</title>
 
   <!-- Şriftlər (onlayn olduqda yüklənir, əks halda sistem şriftinə keçir) -->
@@ -17,25 +19,27 @@
        DİZAYN TOKENLƏRİ
        ============================================================ */
     :root {
-      --bg:        #05070d;
-      --bg-2:      #080d19;
-      --panel:     rgba(14, 21, 38, 0.55);
-      --panel-solid: #0c1220;
-      --border:    rgba(56, 189, 248, 0.16);
-      --border-hover: rgba(56, 189, 248, 0.45);
-      --cyan:      #22d3ee;
-      --blue:      #3b82f6;
-      --green:     #34d399;
-      --red:       #f87171;
+      --bg:        #050f0a;
+      --bg-2:      #07160f;
+      --panel:     rgba(12, 26, 19, 0.55);
+      --panel-solid: #0c1a13;
+      --border:    rgba(34, 197, 94, 0.18);
+      --border-hover: rgba(34, 197, 94, 0.5);
+      /* --cyan / --blue var adları saxlanılıb, dəyər isə yaşıl/qırmızıdır */
+      --cyan:      #34d399;   /* əsas vurğu — yaşıl */
+      --blue:      #ef4444;   /* ikincil vurğu — qırmızı */
+      --green:     #22c55e;
+      --red:       #ef4444;
       --amber:     #fbbf24;
-      --text:      #e6edf6;
-      --muted:     #93a4bd;
-      --heading:   #f4f8ff;
-      --grad:      linear-gradient(135deg, #22d3ee 0%, #3b82f6 60%, #6366f1 100%);
-      --grad-green:linear-gradient(135deg, #34d399, #22d3ee);
+      --text:      #e7f3ec;
+      --muted:     #92a89c;
+      --heading:   #f2fbf5;
+      --grad:      linear-gradient(135deg, #34d399 0%, #22c55e 45%, #ef4444 125%);
+      --grad-btn:  linear-gradient(135deg, #22c55e 0%, #15a34a 100%);
+      --grad-green:linear-gradient(135deg, #34d399, #22c55e);
       --radius:    18px;
-      --shadow:    0 20px 60px -20px rgba(0, 0, 0, 0.7);
-      --glow:      0 0 40px -6px rgba(34, 211, 238, 0.35);
+      --shadow:    0 20px 60px -20px rgba(0, 0, 0, 0.72);
+      --glow:      0 0 40px -6px rgba(34, 197, 94, 0.42);
       --maxw:      1200px;
       --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
       --font-head: 'Space Grotesk', 'Inter', system-ui, sans-serif;
@@ -74,16 +78,16 @@
     /* data-center işıq parıltıları */
     .bg-glow {
       background:
-        radial-gradient(650px 500px at 12% 8%, rgba(34, 211, 238, 0.16), transparent 60%),
-        radial-gradient(700px 600px at 88% 12%, rgba(99, 102, 241, 0.16), transparent 60%),
+        radial-gradient(650px 500px at 12% 8%, rgba(34, 197, 94, 0.16), transparent 60%),
+        radial-gradient(700px 600px at 88% 12%, rgba(239, 68, 68, 0.16), transparent 60%),
         radial-gradient(900px 700px at 50% 110%, rgba(52, 211, 153, 0.10), transparent 60%),
         linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
     }
     /* incə texnoloji tor */
     .bg-grid {
       background-image:
-        linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+        linear-gradient(rgba(34, 197, 94, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34, 197, 94, 0.05) 1px, transparent 1px);
       background-size: 54px 54px;
       mask-image: radial-gradient(ellipse 100% 100% at 50% 0%, #000 55%, transparent 100%);
       -webkit-mask-image: radial-gradient(ellipse 100% 100% at 50% 0%, #000 55%, transparent 100%);
@@ -113,13 +117,11 @@
     }
     .logo { display: flex; align-items: center; gap: 11px; font-family: var(--font-head); font-weight: 700; font-size: 1.28rem; color: var(--heading); letter-spacing: -0.02em; }
     .logo .mark {
-      width: 38px; height: 38px; border-radius: 11px;
-      background: var(--grad);
+      width: 42px; height: 42px;
       display: grid; place-items: center;
-      box-shadow: var(--glow);
-      position: relative; overflow: hidden;
+      position: relative;
     }
-    .logo .mark svg { width: 21px; height: 21px; }
+    .logo .mark img { width: 42px; height: 42px; object-fit: contain; filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.55)); }
     .logo span.accent { color: var(--cyan); }
 
     .nav-links { display: flex; align-items: center; gap: 8px; }
@@ -127,7 +129,7 @@
       color: var(--muted); font-size: 0.94rem; font-weight: 500;
       padding: 9px 15px; border-radius: 10px; transition: color 0.2s, background 0.2s;
     }
-    .nav-links a.link:hover { color: var(--heading); background: rgba(56, 189, 248, 0.08); }
+    .nav-links a.link:hover { color: var(--heading); background: rgba(34, 197, 94, 0.08); }
 
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 9px;
@@ -136,10 +138,10 @@
       transition: transform 0.22s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s, background 0.25s;
       white-space: nowrap;
     }
-    .btn-primary { background: var(--grad); color: #041020; box-shadow: 0 10px 30px -10px rgba(34, 211, 238, 0.6); }
-    .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 16px 40px -10px rgba(34, 211, 238, 0.8); }
+    .btn-primary { background: var(--grad-btn); color: #042012; box-shadow: 0 10px 30px -10px rgba(34, 197, 94, 0.65); }
+    .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 16px 40px -10px rgba(34, 197, 94, 0.85); }
     .btn-ghost { background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); }
-    .btn-ghost:hover { border-color: var(--border-hover); background: rgba(56, 189, 248, 0.08); transform: translateY(-3px); }
+    .btn-ghost:hover { border-color: var(--border-hover); background: rgba(34, 197, 94, 0.08); transform: translateY(-3px); }
     .btn-lg { padding: 15px 32px; font-size: 1.02rem; }
 
     .nav-toggle { display: none; background: none; border: 1px solid var(--border); border-radius: 10px; width: 44px; height: 44px; cursor: pointer; }
@@ -180,7 +182,7 @@
       background:
         radial-gradient(circle, rgba(34,211,238,0.05) 0%, transparent 70%),
         repeating-radial-gradient(circle, transparent 0 38px, rgba(56,189,248,0.12) 38px 39px);
-      border: 1px solid rgba(56, 189, 248, 0.28);
+      border: 1px solid rgba(34, 197, 94, 0.28);
       box-shadow: inset 0 0 60px rgba(34,211,238,0.08), 0 0 80px -20px rgba(34,211,238,0.4);
       overflow: hidden;
     }
@@ -198,8 +200,8 @@
     .radar .blip.b2 { top: 64%; left: 34%; animation-delay: 1.6s; background: var(--amber); box-shadow: 0 0 12px var(--amber); }
     .radar .blip.b3 { top: 48%; left: 74%; animation-delay: 2.7s; background: var(--red); box-shadow: 0 0 12px var(--red); }
     @keyframes blip { 0%,100% { opacity: 0; transform: scale(0.6); } 15% { opacity: 1; transform: scale(1); } 60% { opacity: 0.15; } }
-    .radar .core { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 54px; height: 54px; border-radius: 50%; background: var(--grad); display: grid; place-items: center; box-shadow: var(--glow); }
-    .radar .core svg { width: 26px; height: 26px; }
+    .radar .core { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 76px; height: 76px; border-radius: 50%; background: radial-gradient(circle, rgba(5,15,10,0.95), rgba(7,22,15,0.85)); border: 1px solid var(--border-hover); display: grid; place-items: center; box-shadow: var(--glow); }
+    .radar .core img { width: 46px; height: 46px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.6)); }
     .radar-label { position: absolute; bottom: -6px; font-size: 0.78rem; color: var(--cyan); letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; }
 
     /* floating chip-lər */
@@ -274,7 +276,7 @@
     }
     .feature:hover { transform: translateY(-8px); border-color: var(--border-hover); box-shadow: var(--glow); }
     .feature:hover::after { opacity: 1; }
-    .feature .ic { width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center; background: rgba(34, 211, 238, 0.09); border: 1px solid rgba(34,211,238,0.22); margin-bottom: 22px; position: relative; z-index: 1; }
+    .feature .ic { width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center; background: rgba(34, 197, 94, 0.09); border: 1px solid rgba(34,211,238,0.22); margin-bottom: 22px; position: relative; z-index: 1; }
     .feature .ic svg { width: 27px; height: 27px; stroke: var(--cyan); }
     .feature h3 { font-family: var(--font-head); font-weight: 600; font-size: 1.2rem; color: var(--heading); margin-bottom: 12px; position: relative; z-index: 1; }
     .feature p { color: var(--muted); font-size: 0.95rem; position: relative; z-index: 1; }
@@ -335,8 +337,10 @@
     .footer ul li { margin-bottom: 11px; }
     .footer ul li a { color: var(--muted); font-size: 0.93rem; transition: color 0.2s; }
     .footer ul li a:hover { color: var(--cyan); }
-    .contact-line { display: flex; align-items: center; gap: 11px; color: var(--text); font-weight: 600; font-size: 1.05rem; }
-    .contact-line svg { width: 19px; height: 19px; stroke: var(--cyan); }
+    .contact-line { display: flex; align-items: center; gap: 11px; color: var(--text); font-weight: 600; font-size: 0.94rem; word-break: break-word; }
+    .contact-line svg { width: 19px; height: 19px; flex-shrink: 0; stroke: var(--cyan); }
+    .contact-line svg[style*="stroke:none"] { fill: var(--cyan); }
+    .contact-line a { transition: color 0.2s; }
     .contact-line a:hover { color: var(--cyan); }
     .footer-bottom { border-top: 1px solid var(--border); padding-top: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 0.87rem; }
 
@@ -399,9 +403,7 @@
   <header class="nav" id="nav">
     <div class="container nav-inner">
       <a href="#hero" class="logo" aria-label="AutoSOC ana səhifə">
-        <span class="mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z" fill="#041020" opacity=".25"/><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z" stroke="#041020" stroke-width="1.6" stroke-linejoin="round"/><path d="m8.5 12 2.5 2.5 4.5-5" stroke="#041020" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </span>
+        <span class="mark"><img src="autosoc_logo.png" alt="AutoSOC loqosu" width="42" height="42" /></span>
         Auto<span class="accent">SOC</span>
       </a>
 
@@ -410,7 +412,7 @@
         <a class="link" href="#features">İmkanlar</a>
         <a class="link" href="#tech">Texnologiya</a>
         <a class="link" href="#contact">Əlaqə</a>
-        <a class="btn btn-primary" href="#contact">Demo Sifariş Et</a>
+        <a class="btn btn-primary" href="https://wa.me/994706642848?text=Salam%2C%20AutoSOC%20demosu%20il%C9%99%20maraqlan%C4%B1ram." target="_blank" rel="noopener">Demo Sifariş Et</a>
       </nav>
 
       <button class="nav-toggle" id="navToggle" aria-label="Menyunu aç/bağla">
@@ -447,7 +449,7 @@
           <div class="sweep"></div>
           <span class="blip b1"></span><span class="blip b2"></span><span class="blip b3"></span>
           <div class="core">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#041020" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z"/></svg>
+            <img src="autosoc_logo.png" alt="AutoSOC loqosu" width="46" height="46" />
           </div>
           <span class="radar-label">Canlı Monitorinq</span>
         </div>
@@ -599,9 +601,9 @@
       <div class="cta-inner reveal">
         <h2>İnfrastrukturunuzu bu gün qorumağa başlayın</h2>
         <p>AutoSOC ilə hücumları gec deyil, baş verən anda dayandırın. Demo və ya konsultasiya üçün bizimlə əlaqə saxlayın.</p>
-        <a href="tel:+994706642848" class="btn btn-primary btn-lg">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#041020" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg>
-          +994 70 664 28 48
+        <a href="https://wa.me/994706642848?text=Salam%2C%20AutoSOC%20demosu%20il%C9%99%20maraqlan%C4%B1ram." target="_blank" rel="noopener" class="btn btn-primary btn-lg">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#042012" aria-hidden="true"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Zm5.8 14.1c-.24.68-1.42 1.3-1.95 1.35-.5.05-1.13.24-3.66-.77-3.08-1.24-5.05-4.4-5.2-4.6-.15-.2-1.24-1.65-1.24-3.15s.79-2.24 1.07-2.54c.28-.3.61-.38.81-.38.2 0 .4.002.58.01.19.01.44-.07.69.53.24.6.83 2.07.9 2.22.07.15.12.32.02.52-.1.2-.15.32-.3.5-.15.18-.31.4-.44.53-.15.15-.3.31-.13.6.17.29.76 1.25 1.63 2.03 1.12 1 2.06 1.31 2.35 1.46.29.15.46.12.63-.07.17-.2.73-.85.92-1.14.19-.29.39-.24.65-.15.26.1 1.67.79 1.96.93.29.15.48.22.55.34.07.12.07.68-.17 1.36Z"/></svg>
+          WhatsApp: +994 70 664 28 48
         </a>
       </div>
     </div>
@@ -613,9 +615,7 @@
       <div class="footer-grid">
         <div>
           <a href="#hero" class="logo">
-            <span class="mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z" stroke="#041020" stroke-width="1.6" stroke-linejoin="round"/><path d="m8.5 12 2.5 2.5 4.5-5" stroke="#041020" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </span>
+            <span class="mark"><img src="autosoc_logo.png" alt="AutoSOC loqosu" width="42" height="42" /></span>
             Auto<span class="accent">SOC</span>
           </a>
           <p class="brand-desc">Avtonom Təhlükəsizlik Əməliyyatları Mərkəzi. İnfrastrukturunuzu real vaxtda aşkarlama və avtomatik reaksiya ilə qoruyur.</p>
@@ -633,8 +633,20 @@
           <ul>
             <li>
               <div class="contact-line">
+                <svg viewBox="0 0 24 24" fill="currentColor" style="stroke:none"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Zm5.8 14.1c-.24.68-1.42 1.3-1.95 1.35-.5.05-1.13.24-3.66-.77-3.08-1.24-5.05-4.4-5.2-4.6-.15-.2-1.24-1.65-1.24-3.15s.79-2.24 1.07-2.54c.28-.3.61-.38.81-.38.2 0 .4.002.58.01.19.01.44-.07.69.53.24.6.83 2.07.9 2.22.07.15.12.32.02.52-.53 1.02-1.09 1-.44.53-.15.15-.3.31-.13.6.17.29.76 1.25 1.63 2.03 1.12 1 2.06 1.31 2.35 1.46.29.15.46.12.63-.07.17-.2.73-.85.92-1.14.19-.29.39-.24.65-.15.26.1 1.67.79 1.96.93.29.15.48.22.55.34.07.12.07.68-.17 1.36Z" style="stroke:none"/></svg>
+                <a href="https://wa.me/994706642848?text=Salam%2C%20AutoSOC%20demosu%20il%C9%99%20maraqlan%C4%B1ram." target="_blank" rel="noopener">WhatsApp — +994 70 664 28 48</a>
+              </div>
+            </li>
+            <li>
+              <div class="contact-line">
                 <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg>
                 <a href="tel:+994706642848">+994 70 664 28 48</a>
+              </div>
+            </li>
+            <li>
+              <div class="contact-line">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>
+                <a href="mailto:keremlidzalil77@gmail.com">keremlidzalil77@gmail.com</a>
               </div>
             </li>
           </ul>
@@ -824,7 +836,7 @@
             var dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < linkDist) {
               var op = (1 - dist / linkDist) * 0.5;
-              ctx.strokeStyle = 'rgba(56, 189, 248,' + op + ')';
+              ctx.strokeStyle = 'rgba(34, 197, 94,' + op + ')';
               ctx.lineWidth = 1 * DPR;
               ctx.beginPath();
               ctx.moveTo(n.x, n.y); ctx.lineTo(m.x, m.y); ctx.stroke();
@@ -835,7 +847,7 @@
           var p = nodes[k];
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(34, 211, 238, 0.85)';
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.85)';
           ctx.fill();
         }
         requestAnimationFrame(draw);
