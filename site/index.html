@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="AutoSOC — serverlərinizi və şəbəkə infrastrukturunuzu qoruyan güclü, yüngül və çarpaz-platforma Təhlükəsizlik Əməliyyatları Mərkəzi (SOC). Real vaxtda aşkarlama, təhlil və avtomatik reaksiya." />
+  <meta name="theme-color" content="#05070d" />
+  <title>AutoSOC — Avtonom Təhlükəsizlik Əməliyyatları Mərkəzi</title>
+
+  <!-- Şriftlər (onlayn olduqda yüklənir, əks halda sistem şriftinə keçir) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ============================================================
+       DİZAYN TOKENLƏRİ
+       ============================================================ */
+    :root {
+      --bg:        #05070d;
+      --bg-2:      #080d19;
+      --panel:     rgba(14, 21, 38, 0.55);
+      --panel-solid: #0c1220;
+      --border:    rgba(56, 189, 248, 0.16);
+      --border-hover: rgba(56, 189, 248, 0.45);
+      --cyan:      #22d3ee;
+      --blue:      #3b82f6;
+      --green:     #34d399;
+      --red:       #f87171;
+      --amber:     #fbbf24;
+      --text:      #e6edf6;
+      --muted:     #93a4bd;
+      --heading:   #f4f8ff;
+      --grad:      linear-gradient(135deg, #22d3ee 0%, #3b82f6 60%, #6366f1 100%);
+      --grad-green:linear-gradient(135deg, #34d399, #22d3ee);
+      --radius:    18px;
+      --shadow:    0 20px 60px -20px rgba(0, 0, 0, 0.7);
+      --glow:      0 0 40px -6px rgba(34, 211, 238, 0.35);
+      --maxw:      1200px;
+      --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+      --font-head: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+    }
+
+    /* ============================================================
+       ƏSAS / RESET
+       ============================================================ */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 90px; }
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    ul { list-style: none; }
+    img, svg { display: block; }
+    section { position: relative; z-index: 2; }
+
+    /* ============================================================
+       CANLI FON — şəbəkə qovşaqları (canvas) + tor + parıltılar
+       ============================================================ */
+    #bg-canvas {
+      position: fixed; inset: 0; z-index: 0;
+      width: 100%; height: 100%;
+      opacity: 0.55;
+      pointer-events: none;
+    }
+    .bg-layer {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    }
+    /* data-center işıq parıltıları */
+    .bg-glow {
+      background:
+        radial-gradient(650px 500px at 12% 8%, rgba(34, 211, 238, 0.16), transparent 60%),
+        radial-gradient(700px 600px at 88% 12%, rgba(99, 102, 241, 0.16), transparent 60%),
+        radial-gradient(900px 700px at 50% 110%, rgba(52, 211, 153, 0.10), transparent 60%),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+    }
+    /* incə texnoloji tor */
+    .bg-grid {
+      background-image:
+        linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+      background-size: 54px 54px;
+      mask-image: radial-gradient(ellipse 100% 100% at 50% 0%, #000 55%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 100% 100% at 50% 0%, #000 55%, transparent 100%);
+    }
+
+    /* ============================================================
+       KONTEYNER
+       ============================================================ */
+    .container { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+    /* ============================================================
+       NAVİQASİYA
+       ============================================================ */
+    header.nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      transition: background 0.35s ease, box-shadow 0.35s ease, backdrop-filter 0.35s ease;
+    }
+    header.nav.scrolled {
+      background: rgba(6, 9, 16, 0.78);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 72px;
+    }
+    .logo { display: flex; align-items: center; gap: 11px; font-family: var(--font-head); font-weight: 700; font-size: 1.28rem; color: var(--heading); letter-spacing: -0.02em; }
+    .logo .mark {
+      width: 38px; height: 38px; border-radius: 11px;
+      background: var(--grad);
+      display: grid; place-items: center;
+      box-shadow: var(--glow);
+      position: relative; overflow: hidden;
+    }
+    .logo .mark svg { width: 21px; height: 21px; }
+    .logo span.accent { color: var(--cyan); }
+
+    .nav-links { display: flex; align-items: center; gap: 8px; }
+    .nav-links a.link {
+      color: var(--muted); font-size: 0.94rem; font-weight: 500;
+      padding: 9px 15px; border-radius: 10px; transition: color 0.2s, background 0.2s;
+    }
+    .nav-links a.link:hover { color: var(--heading); background: rgba(56, 189, 248, 0.08); }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      font-family: var(--font-body); font-weight: 600; font-size: 0.95rem;
+      padding: 12px 24px; border-radius: 12px; cursor: pointer; border: none;
+      transition: transform 0.22s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s, background 0.25s;
+      white-space: nowrap;
+    }
+    .btn-primary { background: var(--grad); color: #041020; box-shadow: 0 10px 30px -10px rgba(34, 211, 238, 0.6); }
+    .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 16px 40px -10px rgba(34, 211, 238, 0.8); }
+    .btn-ghost { background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--border-hover); background: rgba(56, 189, 248, 0.08); transform: translateY(-3px); }
+    .btn-lg { padding: 15px 32px; font-size: 1.02rem; }
+
+    .nav-toggle { display: none; background: none; border: 1px solid var(--border); border-radius: 10px; width: 44px; height: 44px; cursor: pointer; }
+    .nav-toggle span { display: block; width: 20px; height: 2px; background: var(--text); margin: 4px auto; transition: 0.3s; }
+
+    /* ============================================================
+       HERO
+       ============================================================ */
+    .hero { padding: 150px 0 90px; }
+    .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 50px; align-items: center; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 7px 15px; border-radius: 999px;
+      background: rgba(52, 211, 153, 0.08); border: 1px solid rgba(52, 211, 153, 0.28);
+      color: var(--green); font-size: 0.83rem; font-weight: 600; letter-spacing: 0.01em;
+      margin-bottom: 26px;
+    }
+    .badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(52,211,153,.7); animation: pulse 2s infinite; }
+    @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+
+    .hero h1 {
+      font-family: var(--font-head); font-weight: 700;
+      font-size: clamp(2.3rem, 5.2vw, 3.9rem); line-height: 1.08;
+      letter-spacing: -0.025em; color: var(--heading);
+      text-shadow: 0 2px 30px rgba(0,0,0,0.5);
+      margin-bottom: 22px;
+    }
+    .hero h1 .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .kicker { font-family: var(--font-head); font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; font-size: 0.8rem; color: var(--cyan); margin-bottom: 18px; }
+    .hero p.lead { font-size: clamp(1.02rem, 1.6vw, 1.2rem); color: var(--muted); max-width: 560px; margin-bottom: 34px; }
+    .hero-cta { display: flex; gap: 15px; flex-wrap: wrap; }
+
+    /* HERO görüntü — radar skaneri */
+    .radar-wrap { display: grid; place-items: center; position: relative; }
+    .radar {
+      position: relative; width: min(400px, 82vw); aspect-ratio: 1;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, rgba(34,211,238,0.05) 0%, transparent 70%),
+        repeating-radial-gradient(circle, transparent 0 38px, rgba(56,189,248,0.12) 38px 39px);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      box-shadow: inset 0 0 60px rgba(34,211,238,0.08), 0 0 80px -20px rgba(34,211,238,0.4);
+      overflow: hidden;
+    }
+    .radar::before, .radar::after { content: ""; position: absolute; background: rgba(56,189,248,0.16); }
+    .radar::before { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%); }
+    .radar::after { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%); }
+    .radar .sweep {
+      position: absolute; inset: 0; border-radius: 50%;
+      background: conic-gradient(from 0deg, rgba(34,211,238,0.35), transparent 55%);
+      animation: sweep 4s linear infinite;
+    }
+    @keyframes sweep { to { transform: rotate(360deg); } }
+    .radar .blip { position: absolute; width: 11px; height: 11px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); animation: blip 4s infinite; }
+    .radar .blip.b1 { top: 26%; left: 62%; animation-delay: 0.4s; }
+    .radar .blip.b2 { top: 64%; left: 34%; animation-delay: 1.6s; background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+    .radar .blip.b3 { top: 48%; left: 74%; animation-delay: 2.7s; background: var(--red); box-shadow: 0 0 12px var(--red); }
+    @keyframes blip { 0%,100% { opacity: 0; transform: scale(0.6); } 15% { opacity: 1; transform: scale(1); } 60% { opacity: 0.15; } }
+    .radar .core { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 54px; height: 54px; border-radius: 50%; background: var(--grad); display: grid; place-items: center; box-shadow: var(--glow); }
+    .radar .core svg { width: 26px; height: 26px; }
+    .radar-label { position: absolute; bottom: -6px; font-size: 0.78rem; color: var(--cyan); letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; }
+
+    /* floating chip-lər */
+    .chip {
+      position: absolute; display: flex; align-items: center; gap: 9px;
+      padding: 10px 15px; border-radius: 13px;
+      background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border); box-shadow: var(--shadow);
+      font-size: 0.84rem; font-weight: 600; color: var(--text);
+      animation: float 5s ease-in-out infinite;
+    }
+    .chip svg { width: 17px; height: 17px; }
+    .chip.c1 { top: 8%; left: -4%; }
+    .chip.c2 { bottom: 10%; right: -6%; animation-delay: 1.5s; }
+    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
+
+    /* ============================================================
+       STATİSTİKA ZOLAĞI
+       ============================================================ */
+    .stats { padding: 30px 0; }
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px;
+      padding: 30px; border-radius: var(--radius);
+      background: var(--panel); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border); box-shadow: var(--shadow);
+    }
+    .stat { text-align: center; }
+    .stat .num { font-family: var(--font-head); font-weight: 700; font-size: clamp(1.9rem, 4vw, 2.7rem); background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; line-height: 1; }
+    .stat .lbl { color: var(--muted); font-size: 0.88rem; margin-top: 8px; }
+    .stat + .stat { border-left: 1px solid var(--border); }
+
+    /* ============================================================
+       ÜMUMİ BÖLMƏ BAŞLIQLARI
+       ============================================================ */
+    .section-pad { padding: 100px 0; }
+    .section-head { text-align: center; max-width: 720px; margin: 0 auto 60px; }
+    .section-head .tag { font-family: var(--font-head); font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; font-size: 0.78rem; color: var(--cyan); display: inline-block; margin-bottom: 16px; }
+    .section-head h2 { font-family: var(--font-head); font-weight: 700; font-size: clamp(1.9rem, 4vw, 2.9rem); letter-spacing: -0.02em; color: var(--heading); line-height: 1.15; margin-bottom: 16px; }
+    .section-head p { color: var(--muted); font-size: 1.05rem; }
+
+    /* ============================================================
+       PROBLEMLƏR
+       ============================================================ */
+    .problems-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; }
+    .problem {
+      padding: 30px 26px; border-radius: var(--radius);
+      background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border); position: relative; overflow: hidden;
+      transition: transform 0.3s, border-color 0.3s;
+    }
+    .problem::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--red), var(--amber)); opacity: 0.7; }
+    .problem:hover { transform: translateY(-6px); border-color: rgba(248, 113, 113, 0.4); }
+    .problem .ic { width: 52px; height: 52px; border-radius: 13px; display: grid; place-items: center; background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248,113,113,0.25); margin-bottom: 20px; }
+    .problem .ic svg { width: 25px; height: 25px; stroke: var(--red); }
+    .problem h3 { font-family: var(--font-head); font-weight: 600; font-size: 1.14rem; color: var(--heading); margin-bottom: 10px; }
+    .problem p { color: var(--muted); font-size: 0.93rem; }
+
+    /* ============================================================
+       İMKANLAR (FEATURES)
+       ============================================================ */
+    .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .feature {
+      padding: 34px 30px; border-radius: var(--radius); position: relative; overflow: hidden;
+      background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      transition: transform 0.35s cubic-bezier(.34,1.4,.64,1), border-color 0.35s, box-shadow 0.35s;
+    }
+    .feature::after {
+      content: ""; position: absolute; inset: 0; border-radius: var(--radius);
+      background: radial-gradient(400px circle at var(--mx, 50%) var(--my, 0%), rgba(34,211,238,0.1), transparent 45%);
+      opacity: 0; transition: opacity 0.4s; pointer-events: none;
+    }
+    .feature:hover { transform: translateY(-8px); border-color: var(--border-hover); box-shadow: var(--glow); }
+    .feature:hover::after { opacity: 1; }
+    .feature .ic { width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center; background: rgba(34, 211, 238, 0.09); border: 1px solid rgba(34,211,238,0.22); margin-bottom: 22px; position: relative; z-index: 1; }
+    .feature .ic svg { width: 27px; height: 27px; stroke: var(--cyan); }
+    .feature h3 { font-family: var(--font-head); font-weight: 600; font-size: 1.2rem; color: var(--heading); margin-bottom: 12px; position: relative; z-index: 1; }
+    .feature p { color: var(--muted); font-size: 0.95rem; position: relative; z-index: 1; }
+    .feature .num-tag { position: absolute; top: 22px; right: 26px; font-family: var(--font-head); font-weight: 700; font-size: 2.4rem; color: rgba(56,189,248,0.09); z-index: 0; }
+
+    /* ============================================================
+       TEXNOLOGİYA / İNTEQRASİYA + TERMİNAL
+       ============================================================ */
+    .tech-grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 44px; align-items: center; }
+    .tech-points { display: flex; flex-direction: column; gap: 22px; }
+    .tech-point { display: flex; gap: 18px; padding: 22px; border-radius: 15px; background: var(--panel); border: 1px solid var(--border); transition: border-color 0.3s, transform 0.3s; }
+    .tech-point:hover { border-color: var(--border-hover); transform: translateX(6px); }
+    .tech-point .ic { flex-shrink: 0; width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; background: var(--grad); box-shadow: var(--glow); }
+    .tech-point .ic svg { width: 23px; height: 23px; stroke: #041020; }
+    .tech-point h3 { font-family: var(--font-head); font-weight: 600; font-size: 1.08rem; color: var(--heading); margin-bottom: 6px; }
+    .tech-point p { color: var(--muted); font-size: 0.92rem; }
+    .tech-point code { background: rgba(56,189,248,0.12); color: var(--cyan); padding: 1px 7px; border-radius: 6px; font-size: 0.85em; }
+
+    /* terminal */
+    .terminal { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); background: rgba(4, 8, 15, 0.9); box-shadow: var(--shadow); }
+    .term-bar { display: flex; align-items: center; gap: 8px; padding: 13px 16px; background: rgba(13, 20, 36, 0.9); border-bottom: 1px solid var(--border); }
+    .term-bar .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .term-bar .r { background: #ff5f56; } .term-bar .y { background: #ffbd2e; } .term-bar .g { background: #27c93f; }
+    .term-bar .title { margin-left: 10px; font-size: 0.82rem; color: var(--muted); font-family: var(--font-head); }
+    .term-body { padding: 22px; font-family: 'Space Grotesk', 'Consolas', ui-monospace, monospace; font-size: 0.86rem; line-height: 1.95; min-height: 300px; }
+    .term-body .ln { white-space: pre-wrap; word-break: break-word; }
+    .term-body .prompt { color: var(--green); }
+    .term-body .info { color: var(--cyan); }
+    .term-body .warn { color: var(--amber); }
+    .term-body .mitre { color: #c4b5fd; }
+    .term-body .danger { color: var(--red); }
+    .term-body .ok { color: var(--green); }
+    .term-body .muted { color: var(--muted); }
+    .cursor { display: inline-block; width: 9px; height: 1.05em; background: var(--cyan); vertical-align: text-bottom; animation: blink 1s steps(2) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ============================================================
+       CTA ZOLAĞI
+       ============================================================ */
+    .cta-band { padding: 30px 0 100px; }
+    .cta-inner {
+      text-align: center; padding: 64px 40px; border-radius: 26px; position: relative; overflow: hidden;
+      background: linear-gradient(135deg, rgba(34,211,238,0.12), rgba(99,102,241,0.12));
+      border: 1px solid var(--border-hover);
+    }
+    .cta-inner::before { content: ""; position: absolute; inset: 0; background: radial-gradient(500px circle at 50% 0%, rgba(34,211,238,0.2), transparent 60%); }
+    .cta-inner > * { position: relative; z-index: 1; }
+    .cta-inner h2 { font-family: var(--font-head); font-weight: 700; font-size: clamp(1.7rem, 3.6vw, 2.6rem); color: var(--heading); letter-spacing: -0.02em; margin-bottom: 16px; }
+    .cta-inner p { color: var(--muted); font-size: 1.08rem; max-width: 560px; margin: 0 auto 32px; }
+
+    /* ============================================================
+       FOOTER
+       ============================================================ */
+    footer.footer { border-top: 1px solid var(--border); background: rgba(6, 9, 16, 0.7); padding: 60px 0 30px; position: relative; z-index: 2; }
+    .footer-grid { display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 40px; margin-bottom: 44px; }
+    .footer .brand-desc { color: var(--muted); font-size: 0.94rem; max-width: 320px; margin-top: 16px; }
+    .footer h4 { font-family: var(--font-head); font-weight: 600; color: var(--heading); font-size: 1rem; margin-bottom: 18px; }
+    .footer ul li { margin-bottom: 11px; }
+    .footer ul li a { color: var(--muted); font-size: 0.93rem; transition: color 0.2s; }
+    .footer ul li a:hover { color: var(--cyan); }
+    .contact-line { display: flex; align-items: center; gap: 11px; color: var(--text); font-weight: 600; font-size: 1.05rem; }
+    .contact-line svg { width: 19px; height: 19px; stroke: var(--cyan); }
+    .contact-line a:hover { color: var(--cyan); }
+    .footer-bottom { border-top: 1px solid var(--border); padding-top: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 0.87rem; }
+
+    /* ============================================================
+       SCROLL REVEAL ANİMASİYASI
+       ============================================================ */
+    .reveal { opacity: 0; transform: translateY(34px); transition: opacity 0.7s cubic-bezier(.16,1,.3,1), transform 0.7s cubic-bezier(.16,1,.3,1); }
+    .reveal.visible { opacity: 1; transform: none; }
+    .reveal.d1 { transition-delay: 0.08s; }
+    .reveal.d2 { transition-delay: 0.16s; }
+    .reveal.d3 { transition-delay: 0.24s; }
+    .reveal.d4 { transition-delay: 0.32s; }
+    .reveal.d5 { transition-delay: 0.40s; }
+
+    /* ============================================================
+       RESPONSİV
+       ============================================================ */
+    @media (max-width: 980px) {
+      .hero-grid { grid-template-columns: 1fr; gap: 60px; }
+      .radar-wrap { order: -1; }
+      .hero p.lead { margin-left: auto; margin-right: auto; }
+      .hero { text-align: center; }
+      .hero-cta { justify-content: center; }
+      .badge { margin-left: auto; margin-right: auto; }
+      .problems-grid { grid-template-columns: repeat(2, 1fr); }
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+      .tech-grid { grid-template-columns: 1fr; gap: 34px; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 26px; }
+      .stat:nth-child(3), .stat:nth-child(1) { border-left: none; }
+      .stat + .stat { border-left: none; }
+    }
+    @media (max-width: 640px) {
+      .nav-links { position: fixed; top: 72px; left: 0; right: 0; flex-direction: column; align-items: stretch; gap: 6px; padding: 18px 24px 26px; background: rgba(6,9,16,0.97); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--border); transform: translateY(-140%); transition: transform 0.4s cubic-bezier(.16,1,.3,1); }
+      .nav-links.open { transform: translateY(0); }
+      .nav-links a.link { padding: 13px 16px; }
+      .nav-links .btn { margin-top: 8px; }
+      .nav-toggle { display: block; }
+      .problems-grid, .features-grid { grid-template-columns: 1fr; }
+      .footer-grid { grid-template-columns: 1fr; gap: 34px; }
+      .section-pad { padding: 72px 0; }
+      .hero { padding: 128px 0 70px; }
+      .cta-inner { padding: 48px 26px; }
+    }
+
+    /* Hərəkəti azaltma seçimi olan istifadəçilər üçün */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+      .reveal { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== CANLI FON ==================== -->
+  <div class="bg-layer bg-glow"></div>
+  <div class="bg-layer bg-grid"></div>
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- ==================== NAVİQASİYA ==================== -->
+  <header class="nav" id="nav">
+    <div class="container nav-inner">
+      <a href="#hero" class="logo" aria-label="AutoSOC ana səhifə">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z" fill="#041020" opacity=".25"/><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z" stroke="#041020" stroke-width="1.6" stroke-linejoin="round"/><path d="m8.5 12 2.5 2.5 4.5-5" stroke="#041020" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        Auto<span class="accent">SOC</span>
+      </a>
+
+      <nav class="nav-links" id="navLinks">
+        <a class="link" href="#problems">Problemlər</a>
+        <a class="link" href="#features">İmkanlar</a>
+        <a class="link" href="#tech">Texnologiya</a>
+        <a class="link" href="#contact">Əlaqə</a>
+        <a class="btn btn-primary" href="#contact">Demo Sifariş Et</a>
+      </nav>
+
+      <button class="nav-toggle" id="navToggle" aria-label="Menyunu aç/bağla">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ==================== HERO ==================== -->
+  <section class="hero" id="hero">
+    <div class="container hero-grid">
+      <div class="hero-text">
+        <div class="kicker reveal">Avtomatlaşdırılmış SOC Platforması</div>
+        <h1 class="reveal d1">Kibertəhlükələri real vaxtda <span class="grad">aşkarla, təhlil et, dayandır</span></h1>
+        <p class="lead reveal d2">AutoSOC — serverlərinizi və şəbəkə infrastrukturunuzu qoruyan güclü, yüngül və çarpaz-platforma <strong>Təhlükəsizlik Əməliyyatları Mərkəzidir</strong>. Windows və Linux üçün vahid həll.</p>
+        <div class="hero-cta reveal d3">
+          <a href="#features" class="btn btn-primary btn-lg">İmkanları Kəşf Et
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#041020" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a href="#tech" class="btn btn-ghost btn-lg">Necə İşləyir?</a>
+        </div>
+      </div>
+
+      <div class="radar-wrap reveal d2">
+        <div class="chip c1" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          Təhlükə bloklandı
+        </div>
+        <div class="chip c2" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          Port skanı aktiv
+        </div>
+        <div class="radar" role="img" aria-label="Aktiv şəbəkə skaneri">
+          <div class="sweep"></div>
+          <span class="blip b1"></span><span class="blip b2"></span><span class="blip b3"></span>
+          <div class="core">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#041020" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z"/></svg>
+          </div>
+          <span class="radar-label">Canlı Monitorinq</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== STATİSTİKA ==================== -->
+  <section class="stats">
+    <div class="container">
+      <div class="stats-grid reveal">
+        <div class="stat"><div class="num" data-target="30" data-suffix="+">0</div><div class="lbl">MITRE ATT&CK qoruyucu qaydası</div></div>
+        <div class="stat"><div class="num" data-target="2">0</div><div class="lbl">Əsas platforma — Windows &amp; Linux</div></div>
+        <div class="stat"><div class="num" data-plain="&lt;5 san">0</div><div class="lbl">Hücuma orta reaksiya vaxtı</div></div>
+        <div class="stat"><div class="num" data-plain="24/7">0</div><div class="lbl">Fasiləsiz monitorinq</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== PROBLEMLƏR ==================== -->
+  <section class="section-pad" id="problems">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="tag">Həll etdiyimiz problemlər</span>
+        <h2>Müasir infrastruktur hər gün risk altındadır</h2>
+        <p>Ənənəvi qorunma üsulları sürətli və mürəkkəb hücumların qarşısında acizdir. AutoSOC bu kritik boşluqları aradan qaldırır.</p>
+      </div>
+      <div class="problems-grid">
+        <div class="problem reveal d1">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+          <h3>İcazəsiz Giriş</h3>
+          <p>Brute Force hücumları və oğurlanmış etimadnamələr vasitəsilə sistemlərə icazəsiz daxilolma cəhdləri.</p>
+        </div>
+        <div class="problem reveal d2">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+          <h3>Yavaş Reaksiya</h3>
+          <p>Təhlükəyə əl ilə reaksiya saatlar çəkir — bu müddət ərzində isə dəyən zərər durmadan artır.</p>
+        </div>
+        <div class="problem reveal d3">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><path d="M6.5 6.5 10 10m4 0 3.5-3.5M10 14l-3.5 3.5"/></svg></div>
+          <h3>Şəbəkə Zəiflikləri</h3>
+          <p>Açıq portlar, səhv konfiqurasiyalar və izlənilməyən xidmətlər hücum səthini genişləndirir.</p>
+        </div>
+        <div class="problem reveal d4">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path d="m3 3 18 18" opacity=".6"/></svg></div>
+          <h3>Görünürlük Çatışmazlığı</h3>
+          <p>Serverlərdə nələrin baş verdiyini görmədən onları effektiv şəkildə qorumaq mümkün deyil.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== İMKANLAR ==================== -->
+  <section class="section-pad" id="features">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="tag">İmkanlar və qabiliyyətlər</span>
+        <h2>Bir platformada tam təhlükəsizlik dəsti</h2>
+        <p>AutoSOC infrastrukturunuzu qorumaq üçün lazım olan hər şeyi vahid, mərkəzləşdirilmiş konsolda birləşdirir.</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature reveal d1">
+          <span class="num-tag">01</span>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg></div>
+          <h3>Şəbəkə Portlarının Skan Edilməsi</h3>
+          <p>Bütün şəbəkə portlarını avtomatik skan edir, açıq və zəif nöqtələri müəyyənləşdirir və gizli xidmətləri aşkarlayır.</p>
+        </div>
+        <div class="feature reveal d2">
+          <span class="num-tag">02</span>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M7 9l2 2-2 2M12 13h4"/></svg></div>
+          <h3>Agent Əsaslı Proseslərin İzlənilməsi</h3>
+          <p>Yüngül agentlər uzaq son nöqtələrdə prosesləri avtomatik izləyir və şübhəli fəaliyyəti dərhal bildirir.</p>
+        </div>
+        <div class="feature reveal d3">
+          <span class="num-tag">03</span>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2M4 7h16M4 7v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7M8 11h8M8 15h5"/></svg></div>
+          <h3>Sadələşdirilmiş SIEM Loq Toplanması</h3>
+          <p>Müxtəlif mənbələrdən loqları vahid mərkəzdə toplayır, normallaşdırır və təhlili əhəmiyyətli dərəcədə sadələşdirir.</p>
+        </div>
+        <div class="feature reveal d1">
+          <span class="num-tag">04</span>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/><path d="M12 8v4M12 15h.01"/></svg></div>
+          <h3>30 MITRE ATT&amp;CK Qoruyucu Qaydası</h3>
+          <p>Əvvəlcədən konfiqurasiya edilmiş 30 qayda ən çox yayılmış hücum texnikalarını tanıyır və bloklayır.</p>
+        </div>
+        <div class="feature reveal d2">
+          <span class="num-tag">05</span>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/><path d="M11 7.5h4a2 2 0 0 1 2 2V13M7.5 11v4a2 2 0 0 0 2 2H13" opacity=".55"/><path d="m2 2 20 20" stroke-width="1.4"/></svg></div>
+          <h3>Uzaq Son Nöqtələrin İzolyasiyası</h3>
+          <p>Brute Force kimi hücumlar zamanı təhlükəli son nöqtələri avtomatik olaraq şəbəkədən təcrid edir.</p>
+        </div>
+        <div class="feature reveal d3">
+          <span class="num-tag">06</span>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></div>
+          <h3>Real-vaxt Avtomatik Reaksiya</h3>
+          <p>Təhdid aşkarlanan kimi sistem insan müdaxiləsi olmadan qoruyucu tədbirləri saniyələr içində işə salır.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== TEXNOLOGİYA / İNTEQRASİYA ==================== -->
+  <section class="section-pad" id="tech">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="tag">Texnologiya və inteqrasiya</span>
+        <h2>Sistemin dərinliyinə inteqrasiya</h2>
+        <p>AutoSOC əməliyyat sisteminin ürəyində işləyir — loqları oxuyur, təhdidləri tanıyır və firewall səviyyəsində reaksiya verir.</p>
+      </div>
+      <div class="tech-grid">
+        <div class="tech-points">
+          <div class="tech-point reveal d1">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 5v14M4 12h16M4 19h16M8 8.5h6M8 15.5h4"/></svg></div>
+            <div>
+              <h3>Loq Təhlili</h3>
+              <p><code>auth.log</code> və digər sistem loqlarını real vaxtda oxuyur, şübhəli giriş cəhdlərini anında aşkarlayır.</p>
+            </div>
+          </div>
+          <div class="tech-point reveal d2">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/><path d="M9 12h6"/></svg></div>
+            <div>
+              <h3>Firewall İnteqrasiyası</h3>
+              <p>Host firewall-u — <code>iptables</code> və <code>ufw</code> — ilə birbaşa işləyərək təhlükəli IP ünvanlarını dərhal bloklayır.</p>
+            </div>
+          </div>
+          <div class="tech-point reveal d3">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></div>
+            <div>
+              <h3>Çarpaz-platforma Dəstəyi</h3>
+              <p>Windows və Linux serverləri vahid konsoldan idarə olunur — heç bir əlavə infrastruktur tələb olunmur.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="terminal reveal d2">
+          <div class="term-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="title">autosoc — canlı təhlükə reaksiyası</span>
+          </div>
+          <div class="term-body" id="terminal" aria-label="AutoSOC canlı jurnal nümunəsi"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== CTA ZOLAĞI ==================== -->
+  <section class="cta-band" id="contact">
+    <div class="container">
+      <div class="cta-inner reveal">
+        <h2>İnfrastrukturunuzu bu gün qorumağa başlayın</h2>
+        <p>AutoSOC ilə hücumları gec deyil, baş verən anda dayandırın. Demo və ya konsultasiya üçün bizimlə əlaqə saxlayın.</p>
+        <a href="tel:+994706642848" class="btn btn-primary btn-lg">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#041020" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg>
+          +994 70 664 28 48
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== FOOTER ==================== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div>
+          <a href="#hero" class="logo">
+            <span class="mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z" stroke="#041020" stroke-width="1.6" stroke-linejoin="round"/><path d="m8.5 12 2.5 2.5 4.5-5" stroke="#041020" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            Auto<span class="accent">SOC</span>
+          </a>
+          <p class="brand-desc">Avtonom Təhlükəsizlik Əməliyyatları Mərkəzi. İnfrastrukturunuzu real vaxtda aşkarlama və avtomatik reaksiya ilə qoruyur.</p>
+        </div>
+        <div>
+          <h4>Platforma</h4>
+          <ul>
+            <li><a href="#problems">Problemlər</a></li>
+            <li><a href="#features">İmkanlar</a></li>
+            <li><a href="#tech">Texnologiya</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4>Əlaqə</h4>
+          <ul>
+            <li>
+              <div class="contact-line">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg>
+                <a href="tel:+994706642848">+994 70 664 28 48</a>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>© <span id="year">2026</span> AutoSOC. Bütün hüquqlar qorunur.</span>
+        <span>Windows • Linux • Çarpaz-platforma Təhlükəsizlik</span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+  (function () {
+    'use strict';
+    var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /* ---------- Cari il ---------- */
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    /* ---------- Naviqasiya: scroll fonu + mobil menyu ---------- */
+    var nav = document.getElementById('nav');
+    var navLinks = document.getElementById('navLinks');
+    var navToggle = document.getElementById('navToggle');
+
+    function onScroll() {
+      if (window.scrollY > 30) nav.classList.add('scrolled');
+      else nav.classList.remove('scrolled');
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+
+    navToggle.addEventListener('click', function () {
+      navLinks.classList.toggle('open');
+    });
+    navLinks.querySelectorAll('a').forEach(function (a) {
+      a.addEventListener('click', function () { navLinks.classList.remove('open'); });
+    });
+
+    /* ---------- Scroll reveal (IntersectionObserver) ---------- */
+    var revealEls = document.querySelectorAll('.reveal');
+    if ('IntersectionObserver' in window && !reduceMotion) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+      revealEls.forEach(function (el) { io.observe(el); });
+    } else {
+      revealEls.forEach(function (el) { el.classList.add('visible'); });
+    }
+
+    /* ---------- Statistika sayğacı ---------- */
+    var counters = document.querySelectorAll('.stat .num');
+    function animateCounter(el) {
+      var plain = el.getAttribute('data-plain');
+      if (plain) { el.textContent = plain; return; }
+      var target = parseInt(el.getAttribute('data-target'), 10) || 0;
+      var suffix = el.getAttribute('data-suffix') || '';
+      if (reduceMotion) { el.textContent = target + suffix; return; }
+      var start = performance.now(), dur = 1400;
+      function tick(now) {
+        var p = Math.min((now - start) / dur, 1);
+        var eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = Math.round(target * eased) + suffix;
+        if (p < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+    if ('IntersectionObserver' in window) {
+      var statIO = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { animateCounter(e.target); statIO.unobserve(e.target); }
+        });
+      }, { threshold: 0.5 });
+      counters.forEach(function (c) { statIO.observe(c); });
+    } else {
+      counters.forEach(animateCounter);
+    }
+
+    /* ---------- Feature kartlarında kursor parıltısı ---------- */
+    document.querySelectorAll('.feature').forEach(function (card) {
+      card.addEventListener('mousemove', function (ev) {
+        var r = card.getBoundingClientRect();
+        card.style.setProperty('--mx', (ev.clientX - r.left) + 'px');
+        card.style.setProperty('--my', (ev.clientY - r.top) + 'px');
+      });
+    });
+
+    /* ---------- Terminal yazı animasiyası ---------- */
+    var termLines = [
+      { c: 'prompt', t: '$ autosoc monitor --start' },
+      { c: 'muted',  t: '[BAŞLADI] AutoSOC izləmə mühərriki aktivləşdirildi' },
+      { c: 'info',   t: '[İZLƏMƏ] auth.log real vaxtda izlənilir...' },
+      { c: 'warn',   t: '[XƏBƏRDARLIQ] 185.220.101.44 — 5 uğursuz giriş cəhdi' },
+      { c: 'mitre',  t: '[MITRE] T1110 — Brute Force texnikası aşkarlandı' },
+      { c: 'info',   t: '[REAKSİYA] iptables qaydası tətbiq olunur → DROP 185.220.101.44' },
+      { c: 'danger', t: '[İZOLYASİYA] Son nöqtə şəbəkədən təcrid edildi' },
+      { c: 'ok',     t: '[STATUS] ✓ Təhlükə neytrallaşdırıldı — 3.2 saniyə' }
+    ];
+    var term = document.getElementById('terminal');
+
+    function typeLine(line, done) {
+      var div = document.createElement('div');
+      div.className = 'ln ' + line.c;
+      term.appendChild(div);
+      var i = 0;
+      (function type() {
+        div.textContent = line.t.slice(0, i);
+        i++;
+        if (i <= line.t.length) setTimeout(type, 16);
+        else done();
+      })();
+    }
+
+    function runTerminal() {
+      term.innerHTML = '';
+      var idx = 0;
+      (function next() {
+        if (idx >= termLines.length) {
+          var c = document.createElement('span');
+          c.className = 'cursor';
+          term.appendChild(c);
+          setTimeout(runTerminal, 4200); // loop
+          return;
+        }
+        typeLine(termLines[idx], function () {
+          idx++;
+          setTimeout(next, 360);
+        });
+      })();
+    }
+
+    if (reduceMotion) {
+      // Statik variant: bütün sətirləri dərhal göstər
+      termLines.forEach(function (l) {
+        var div = document.createElement('div');
+        div.className = 'ln ' + l.c; div.textContent = l.t; term.appendChild(div);
+      });
+    } else if ('IntersectionObserver' in window) {
+      var started = false;
+      var termIO = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting && !started) { started = true; runTerminal(); }
+        });
+      }, { threshold: 0.3 });
+      termIO.observe(term);
+    } else {
+      runTerminal();
+    }
+
+    /* ---------- Canlı fon: şəbəkə qovşaqları ---------- */
+    var canvas = document.getElementById('bg-canvas');
+    var ctx = canvas.getContext ? canvas.getContext('2d') : null;
+    if (ctx && !reduceMotion) {
+      var nodes = [], W, H, DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+      function resize() {
+        W = canvas.width = window.innerWidth * DPR;
+        H = canvas.height = window.innerHeight * DPR;
+        canvas.style.width = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
+        var count = Math.min(90, Math.floor((window.innerWidth * window.innerHeight) / 20000));
+        nodes = [];
+        for (var i = 0; i < count; i++) {
+          nodes.push({
+            x: Math.random() * W, y: Math.random() * H,
+            vx: (Math.random() - 0.5) * 0.28 * DPR,
+            vy: (Math.random() - 0.5) * 0.28 * DPR,
+            r: (Math.random() * 1.6 + 0.8) * DPR
+          });
+        }
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, W, H);
+        var linkDist = 150 * DPR;
+        for (var i = 0; i < nodes.length; i++) {
+          var n = nodes[i];
+          n.x += n.vx; n.y += n.vy;
+          if (n.x < 0 || n.x > W) n.vx *= -1;
+          if (n.y < 0 || n.y > H) n.vy *= -1;
+
+          for (var j = i + 1; j < nodes.length; j++) {
+            var m = nodes[j];
+            var dx = n.x - m.x, dy = n.y - m.y;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < linkDist) {
+              var op = (1 - dist / linkDist) * 0.5;
+              ctx.strokeStyle = 'rgba(56, 189, 248,' + op + ')';
+              ctx.lineWidth = 1 * DPR;
+              ctx.beginPath();
+              ctx.moveTo(n.x, n.y); ctx.lineTo(m.x, m.y); ctx.stroke();
+            }
+          }
+        }
+        for (var k = 0; k < nodes.length; k++) {
+          var p = nodes[k];
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.85)';
+          ctx.fill();
+        }
+        requestAnimationFrame(draw);
+      }
+
+      resize();
+      draw();
+      var rt;
+      window.addEventListener('resize', function () {
+        clearTimeout(rt); rt = setTimeout(resize, 200);
+      });
+    }
+  })();
+  </script>
+</body>
+</html>
